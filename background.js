@@ -28,6 +28,11 @@ messenger.composeScripts
   .register({ js: [{ file: "compose.js" }] })
   .catch(() => {});
 
+// Warm up the AI endpoints at startup: the first request from a fresh
+// Thunderbird process pays DNS/TLS/gateway cold-start costs, which could
+// otherwise make the first click of a session unnecessarily slow.
+MagicTrickAI.aiComplete([{ role: "user", content: "ok" }]).catch(() => {});
+
 messenger.composeAction.onClicked.addListener((tab) => {
   if (tab && tab.id != null) runMagicTrick(tab.id, { mode: "auto" });
 });

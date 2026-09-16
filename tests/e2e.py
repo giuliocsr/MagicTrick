@@ -305,14 +305,15 @@ def read_editor(h):
 
 
 def wait_for_editor_change(h, original_html, timeout=90):
+    """Wait until the editor html differs; returns (state, elapsed_seconds)."""
     start = time.time()
     while True:
-        time.sleep(2)
+        time.sleep(0.25)
         state = read_editor(h)
         if state["html"] != original_html:
-            return state
+            return state, time.time() - start
         if time.time() - start > timeout:
-            return state
+            return state, time.time() - start
 
 
 FIX_INSTRUCTION = (
@@ -326,7 +327,7 @@ def test_fix_and_undo(h):
     open_compose(h, BAD_DRAFT)
     before = read_editor(h)
     run_with_prompt(h, FIX_INSTRUCTION)
-    after = wait_for_editor_change(h, before["html"])
+    after, elapsed = wait_for_editor_change(h, before["html"])
 
     text = after["text"]
     fix_ok = (
@@ -339,8 +340,9 @@ def test_fix_and_undo(h):
         and "Giulio" in text
         and "moz-signature" in after["html"]
     )
+    fix_ok = fix_ok and elapsed < 5.0
     report("grammar fix: draft corrected, quote and signature untouched", fix_ok,
-           "" if fix_ok else "text: " + text[:400])
+           f"{elapsed:.1f}s" if fix_ok else f"{elapsed:.1f}s — text: " + text[:400])
 
     undone = h.exec(
         f"""{SERVICES}
@@ -362,7 +364,7 @@ def test_auto_reply(h):
         "professional, concise, matching the thread's language. "
         "Reply with the reply text only.",
     )
-    after = wait_for_editor_change(h, before["html"])
+    after, elapsed = wait_for_editor_change(h, before["html"])
 
     import re
     reply_match = re.search(r"<p[^>]*>[^<]{25,}", after["html"])
@@ -375,8 +377,9 @@ def test_auto_reply(h):
         and "Can we meet tomorrow at 10" in after["text"]
         and len(" ".join(after["text"].split())) > 60
     )
+    ok = ok and elapsed < 5.0
     report("empty draft: contextual auto-reply generated above intact quote", ok,
-           "" if ok else "html: " + after["html"][:400])
+           f"{elapsed:.1f}s" if ok else f"{elapsed:.1f}s — html: " + after["html"][:400])
 
 
 def main():

@@ -50,8 +50,13 @@ draft region replaced ◀───────────  corrected text
   messages and your signature are off-limits by construction.
 - Replacement happens through the editor's command system (`insertHTML` on the selected
   draft range), which records **one transaction**: a single <kbd>Ctrl+Z</kbd> undoes it.
-- Endpoints are tried **in order**; if one is down, throttled or returns an empty answer,
-  the next one is used. If all fail you get a notification and your text is untouched.
+- Two fast keyless endpoints are raced **in parallel** (LLM7 Mistral Nemo and
+  Pollinations `openai-fast`); the first valid answer wins and the losing request is
+  aborted, with a slower backstop endpoint if both fail. Typical turnaround is well
+  under 5 seconds; the extension also pre-warms the connections at startup so the
+  first click of a session is fast too.
+- Reasoning-heavy free models are deliberately avoided: they can think for 10-30 s
+  before answering. If you swap endpoints in `ai.js`, keep replacements fast.
 - If the button seems dead in a compose window that was already open when you installed
   MagicTrick, close and reopen that window once.
 

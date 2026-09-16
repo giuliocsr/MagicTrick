@@ -59,6 +59,21 @@ test("markdown fences are stripped from wrapped answers", () => {
 /* Endpoint chain (network)                                            */
 /* ------------------------------------------------------------------ */
 
+test("realistic grammar fix completes within 5 seconds", { timeout: 60000 }, async () => {
+  const messages = buildMessages(
+    "fix",
+    "",
+    "He go to store yesterday and buyed three apple for hisself.\n" +
+      "I hopes he share them with we. It were a good day for him and me.",
+    "On 09/16/2026 05:00 PM, Alice Martin wrote:\nDid you get the groceries?"
+  );
+  const t0 = performance.now();
+  const answer = await aiComplete(messages);
+  const elapsed = performance.now() - t0;
+  assert.ok(/went to the store/.test(answer), `unexpected answer: ${answer.slice(0, 120)}`);
+  assert.ok(elapsed < 5000, `grammar fix took ${Math.round(elapsed)}ms (budget 5000ms)`);
+});
+
 test("chain answers through a keyless endpoint", { timeout: 120000 }, async () => {
   const answer = await aiComplete([
     { role: "system", content: "Answer with a single word." },
@@ -66,6 +81,7 @@ test("chain answers through a keyless endpoint", { timeout: 120000 }, async () =
   ]);
   assert.match(answer, /MAGIC/i);
 });
+
 
 test("chain falls back when leading endpoints are broken", { timeout: 120000 }, async () => {
   const saved = AI_ENDPOINTS.map((e) => e.url);
