@@ -98,3 +98,8 @@ async function aiComplete(messages) {
 }
 
 globalThis.MagicTrickAI = { aiComplete };
+
+// Node (unit tests) loads this file via require().
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { AI_ENDPOINTS, aiCallEndpoint, aiCleanOutput, aiComplete };
+}

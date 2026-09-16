@@ -7,6 +7,7 @@
  *
  * Flow of a "fix" run:
  *   composeAction click
+ *     → tabs.executeScript (idempotent compose.js injection)
  *     → tabs.sendMessage(tab, {command:"collect"})   (compose.js)
  *     → build prompt (draft + thread context)
  *     → aiComplete(...)                              (ai.js)
@@ -14,12 +15,18 @@
  */
 "use strict";
 
-/* global MagicTrickAI */
+/* global MagicTrickAI, MagicTrickPrompts */
 
 const BUTTON_TITLE = "MagicTrick — fix this email with AI";
 
 /** Tab ids with a run currently in flight (one run per compose window). */
 const inFlight = new Set();
+
+// Register the compose script programmatically as well: manifest
+// compose_scripts alone are not reliable on every Thunderbird build.
+messenger.composeScripts
+  .register({ js: [{ file: "compose.js" }] })
+  .catch(() => {});
 
 messenger.composeAction.onClicked.addListener((tab) => {
   if (tab && tab.id != null) runMagicTrick(tab.id, { mode: "auto" });
@@ -35,9 +42,9 @@ messenger.menus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "magictrick-with-prompt" && tab && tab.id != null) {
     // Ask the compose script to show the in-window prompt bar; it will call us
     // back with {type:"run-custom", prompt} when the user submits it.
-    messenger.tabs
-      .sendMessage(tab.id, { command: "customPrompt" })
-      .catch((err) => notifyConnectionProblem(err));
+    ensureComposeScript(tab.id)
+      .then(() => messenger.tabs.sendMessage(tab.id, { command: "customPrompt" }))
+      .catch(() => notifyConnectionProblem());
   }
 });
 
@@ -46,6 +53,15 @@ messenger.runtime.onMessage.addListener((msg, sender) => {
     runMagicTrick(sender.tab.id, { mode: "custom", prompt: String(msg.prompt || "") });
   }
 });
+
+/** Make sure compose.js is listening in the given compose tab (idempotent). */
+async function ensureComposeScript(tabId) {
+  try {
+    await messenger.tabs.executeScript(tabId, { file: "compose.js" });
+  } catch {
+    // Already injected or unsupported: the sendMessage callers report problems.
+  }
+}
 
 /**
  * Full pipeline for one compose window.
@@ -57,6 +73,8 @@ async function runMagicTrick(tabId, opts) {
   inFlight.add(tabId);
   await setBusy(tabId, true);
   try {
+    await ensureComposeScript(tabId);
+
     let draft, conversation;
     try {
       const extract = await messenger.tabs.sendMessage(tabId, { command: "collect" });
@@ -96,56 +114,7 @@ async function runMagicTrick(tabId, opts) {
  * The thread is always passed as read-only context; only the draft is work material.
  */
 function buildMessages(mode, customPrompt, draftText, conversationText) {
-  const thread = conversationText.trim()
-    ? "=== EMAIL THREAD (context only — messages written by other people, never rewrite them) ===\n" +
-      conversationText.trim() +
-      "\n\n"
-    : "";
-
-  if (mode === "custom") {
-    return [
-      {
-        role: "system",
-        content:
-          customPrompt.trim() +
-          "\n\nYou are operating inside an email compose window. Respond ONLY with the complete text " +
-          "that should replace the user's current draft. Plain text, no explanations, no markdown fences.",
-      },
-      { role: "user", content: `${thread}=== CURRENT DRAFT ===\n${draftText.trim() || "(empty)"}` },
-    ];
-  }
-
-  if (mode === "reply") {
-    return [
-      {
-        role: "system",
-        content:
-          "You are MagicTrick, a reply-drafting assistant built into Thunderbird. " +
-          "The user's draft is empty and the email thread is given: write the reply they would send.\n" +
-          "- Match the language the thread is written in.\n" +
-          "- Professional, warm and concise; plain prose; greet the sender of the last message naturally.\n" +
-          "- Answer or acknowledge the points of the last message. Do not invent commitments or facts.\n" +
-          "- Do not quote the thread and do not add placeholders like [name] when the names are in the thread.\n" +
-          "- Respond with the reply body text only: no explanations, no markdown fences.",
-      },
-      { role: "user", content: `${thread}=== TASK ===\nWrite the user's reply to the most recent message.` },
-    ];
-  }
-
-  return [
-    {
-      role: "system",
-      content:
-        "You are MagicTrick, an email polishing assistant built into Thunderbird. " +
-        "Fix ONLY grammar, spelling and punctuation in the draft.\n" +
-        "- Keep the draft's language, tone, meaning and structure exactly.\n" +
-        "- Keep greetings, sign-offs, line breaks and lists as they are.\n" +
-        "- Never answer the email, never add new content, never add commentary.\n" +
-        "- Use the thread only as context for names and terminology.\n" +
-        "- Respond with the corrected draft text only: no surrounding quotes, no explanations, no markdown.",
-    },
-    { role: "user", content: `${thread}=== DRAFT TO CORRECT ===\n${draftText.trim()}` },
-  ];
+  return MagicTrickPrompts.buildMessages(mode, customPrompt, draftText, conversationText);
 }
 
 async function setBusy(tabId, busy) {
@@ -171,7 +140,7 @@ function notify(message) {
   });
 }
 
-function notifyConnectionProblem(err) {
+function notifyConnectionProblem() {
   notify(
     "Could not reach this compose window. " +
       "If it was open before MagicTrick was installed or updated, close and reopen it, then try again."

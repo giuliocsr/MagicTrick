@@ -18,7 +18,7 @@
   },
 
   "background": {
-    "scripts": ["ai.js", "background.js"]
+    "scripts": ["ai.js", "prompts.js", "background.js"]
   },
 
   "compose_action": {
@@ -33,12 +33,20 @@
 
   "compose_scripts": [
     {
-      "js": ["compose.js"],
-      "run_at": "document_idle"
+      "js": ["compose.js"]
     }
   ],
 
-  "permissions": ["menus", "notifications"],
+  "commands": {
+    "_execute_compose_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+G"
+      },
+      "description": "Run MagicTrick on the current draft"
+    }
+  },
+
+  "permissions": ["compose", "menus", "notifications"],
 
   "host_permissions": [
     "https://api.llm7.io/*",

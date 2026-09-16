@@ -14,6 +14,7 @@ between you and regret.
 | Click **MagicTrick** with text in the composer | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. |
 | Click **MagicTrick** in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
 | Right-click the button → **MagicTrick with prompt…** | An input bar appears inside the composer — type any instruction ("make it more formal", "translate to German", "shorten to 3 sentences") and press <kbd>Enter</kbd>. |
+| <kbd>Ctrl+Shift+G</kbd> | Same as clicking the button. |
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
 When you are replying, the quoted conversation is sent to the model **as read-only
@@ -71,13 +72,21 @@ draft region replaced ◀───────────  corrected text
 ### For development
 
 ```sh
-npm install -g web-ext
-web-ext run --target thunderbird-desktop
+# AI endpoint chain + prompt construction (plain Node, hits the live endpoints)
+node --test tests/ai.test.mjs
+
+# GUI harness (Thunderbird + Marionette; headless, throwaway profile)
+pip install marionette_driver
+python3 tests/e2e.py
+
+# Manual checklist (button, prompt bar, real Ctrl+Z — needs human hands)
+# see tests/MANUAL.md
 ```
 
-`web-ext` launches Thunderbird with an isolated throwaway profile and reloads the
-extension on every file save — your real profile is never touched. Alternatively use
-Thunderbird's **about:debugging → Load Temporary Add-on** (also leaves no permanent trace).
+The GUI harness covers what synthetic automation can reach; Thunderbird blocks
+untrusted synthetic input on extension toolbar buttons, so the final word on
+click behaviour is `tests/MANUAL.md`. Alternatively use
+**about:debugging → Load Temporary Add-on** on a scratch profile.
 
 ## Project layout
 
@@ -105,7 +114,6 @@ icons/          wand-and-sparkles icon (SVG source + rendered PNGs)
 
 - [ ] Bring-your-own-endpoint mode (Z.AI free tier / OpenAI / local Ollama) for privacy
 - [ ] Selection-only correction (fix just the highlighted paragraph)
-- [ ] Keyboard shortcut (<kbd>Ctrl+Shift+G</kbd>)
 - [ ] Recipient assistant: suggest To/CC/BCC additions found in the thread
 - [ ] Attachment rules: "when I write *attaching reference letters*, attach these files"
 
