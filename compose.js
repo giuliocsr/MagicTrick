@@ -1,12 +1,18 @@
 /**
  * MagicTrick — compose script.
  *
- * Injected into every message compose window. It:
- *   - finds the editing surface (the #messageEditor iframe's document)
- *   - splits the body into the user's draft and the quoted thread/signature
+ * Runs inside the compose surface and:
+ *   - finds the editing document (the email body being composed)
+ *   - splits it into the user's draft and the quoted thread/signature
  *   - applies AI results to the draft region ONLY, as a single editor
  *     transaction — so one Ctrl+Z reverts the whole MagicTrick edit
  *   - shows the in-window input bar for custom prompts
+ *
+ * The script works in TWO injection contexts, depending on the Thunderbird
+ * build: injected into the compose window (the classic compose_scripts path,
+ * where #messageEditor lives in this document), or injected by
+ * tabs.executeScript directly INTO the editor document (modern builds), where
+ * this document IS the email body.
  */
 "use strict";
 
@@ -22,9 +28,15 @@
 
   /** @returns {Document|null} the document being edited (the email body) */
   function getEditorDoc() {
+    // Injected into the compose window: the editor is our #messageEditor.
     const editor = document.getElementById("messageEditor");
     if (editor && editor.contentDocument && editor.contentDocument.body) {
       return editor.contentDocument;
+    }
+    // Injected into the editor document itself (tabs.executeScript): we ARE
+    // the email body.
+    if (document.body && (document.designMode === "on" || document.body.isContentEditable)) {
+      return document;
     }
     // Fallback: any design-mode iframe hosted by the compose window.
     for (const frame of document.querySelectorAll("iframe")) {
@@ -265,7 +277,10 @@
       doc.body.appendChild(bar);
 
       const input = bar.querySelector("input");
+      let settled = false;
       const close = (value) => {
+        if (settled) return;
+        settled = true;
         bar.remove();
         resolve(value);
       };
@@ -276,6 +291,11 @@
         event.stopPropagation();
         if (event.key === "Enter") close(input.value.trim() ? input.value : null);
         if (event.key === "Escape") close(null);
+      });
+      // The bar lives inside the message being composed — the moment focus
+      // leaves it, remove it, so it can never leak into a sent email.
+      bar.addEventListener("focusout", (event) => {
+        if (!bar.contains(event.relatedTarget)) close(null);
       });
       input.focus();
     });

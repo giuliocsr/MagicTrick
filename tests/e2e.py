@@ -223,28 +223,76 @@ def open_compose(h, body_html):
     h.exec(
         f"""{SERVICES}
         const cw = Services.wm.getMostRecentWindow("msgcompose");
-        cw.document.getElementById("messageEditor").contentDocument.body.innerHTML = {json_str(body_html)};
+        const doc = cw.document.getElementById("messageEditor").contentDocument;
+        // Insert through the editor's command system: assigning innerHTML
+        // behind its back races with editor init and gets wiped.
+        doc.defaultView.focus();
+        doc.execCommand("selectAll", false, null);
+        doc.execCommand("insertHTML", false, {json_str(body_html)});
         return null;"""
     )
-    time.sleep(1.5)  # let the compose script settle at document_idle
+    time.sleep(1.5)  # let the compose script settle
 
 
-def click_magic_trick(h):
+def activate_menu_item(h):
+    """Right-click the MagicTrick button and run the 'with prompt' menu item.
+
+    Synthetic mouse clicks on extension toolbar buttons are rejected by
+    Thunderbird's trust checks, but the context menu opens and the extension
+    menu item's doCommand() fires the real handler — the same pipeline as a
+    button click.
+    """
+    h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           if (!b) throw new Error("MagicTrick button not found in compose toolbar");
+           const rect = b.getBoundingClientRect();
+           b.dispatchEvent(new cw.MouseEvent("contextmenu", {
+               bubbles: true, cancelable: true, view: cw, button: 2,
+               clientX: rect.x + 5, clientY: rect.y + 5 }));
+           return null;"""
+    )
     clicked = h.exec(
-        f"""{SERVICES}
-        const cw = Services.wm.getMostRecentWindow("msgcompose");
-        const button = [...cw.document.querySelectorAll("toolbarbutton")].find((b) =>
-          (b.getAttribute("tooltiptext") || "").startsWith("MagicTrick"));
-        if (!button) return {{ error: "MagicTrick button not found in compose toolbar" }};
-        // Toolbar buttons act on the command event; synthetic clicks alone
-        // are not always enough.
-        button.dispatchEvent(new cw.Event("command", {{ bubbles: true }}));
-        button.click();
-        if (typeof button.doCommand === "function") button.doCommand();
-        return {{ ok: true }};"""
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const item = [...cw.document.querySelectorAll("menuitem")]
+               .find((mi) => (mi.label || "").includes("MagicTrick with prompt"));
+           if (!item) return { error: "menu item not found" };
+           item.doCommand();
+           const popup = item.closest("menupopup");
+           if (popup && typeof popup.hidePopup === "function") popup.hidePopup();
+           return { ok: true };"""
     )
     if not (clicked and clicked.get("ok")):
-        raise RuntimeError(clicked and clicked.get("error", "button click failed"))
+        raise RuntimeError(clicked and clicked.get("error", "menu activation failed"))
+
+
+def run_with_prompt(h, instruction, timeout=90):
+    """Activate via the menu, fill the prompt bar, press Enter, wait for the edit."""
+    activate_menu_item(h)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        bar = h.exec(
+            """const cw = Services.wm.getMostRecentWindow("msgcompose");
+               const ed = cw.document.getElementById("messageEditor");
+               const doc = ed.contentDocument;
+               const bar = doc.getElementById("magictrick-bar");
+               return bar ? { input: !!bar.querySelector("input") } : null;"""
+        )
+        if bar and bar.get("input"):
+            break
+        time.sleep(0.5)
+    else:
+        raise RuntimeError("prompt bar never appeared")
+    h.exec(
+        f"""const cw = Services.wm.getMostRecentWindow("msgcompose");
+            const doc = cw.document.getElementById("messageEditor").contentDocument;
+            const input = doc.getElementById("magictrick-bar").querySelector("input");
+            input.value = {json_str(instruction)};
+            input.dispatchEvent(new doc.defaultView.KeyboardEvent("keydown", {{
+                key: "Enter", bubbles: true, cancelable: true }}));
+            return null;"""
+    )
+    return time.time() + timeout
 
 
 def read_editor(h):
@@ -267,10 +315,17 @@ def wait_for_editor_change(h, original_html, timeout=90):
             return state
 
 
+FIX_INSTRUCTION = (
+    "Fix ONLY grammar, spelling and punctuation in the draft above the quoted "
+    "message. Keep meaning, tone, paragraphs, the quote and the signature "
+    "untouched. Reply with the corrected draft text only."
+)
+
+
 def test_fix_and_undo(h):
     open_compose(h, BAD_DRAFT)
     before = read_editor(h)
-    click_magic_trick(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
     after = wait_for_editor_change(h, before["html"])
 
     text = after["text"]
@@ -301,7 +356,12 @@ def test_fix_and_undo(h):
 def test_auto_reply(h):
     open_compose(h, QUOTE_ONLY)
     before = read_editor(h)
-    click_magic_trick(h)
+    run_with_prompt(
+        h,
+        "The draft is empty. Write the user's reply to the quoted email below: "
+        "professional, concise, matching the thread's language. "
+        "Reply with the reply text only.",
+    )
     after = wait_for_editor_change(h, before["html"])
 
     import re
