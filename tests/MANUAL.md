@@ -4,27 +4,28 @@ Automated coverage: `tests/ai.test.mjs` (endpoint chain, prompts) and
 `tests/e2e.py` (Marionette GUI harness — partial: synthetic input events are
 blocked by Thunderbird's trust checks, so button activation needs human hands).
 
-## Install in your real Thunderbird
+## Deploy to your real Thunderbird
 
-**Permanent install (recommended):**
+One command builds the xpi and (re)installs it — always uninstall-first, so it
+is safe to run after every edit:
 
-1. Build (or ask for) `magictrick.xpi`:
-   ```sh
-   zip magictrick.xpi manifest.json ai.js prompts.js background.js compose.js icons/
-   ```
-2. Thunderbird → **Tools → Add-ons and Themes → ⚙ → Install Add-on From File…**
-   → pick `magictrick.xpi` → confirm.
-3. Removing later: Add-ons Manager → MagicTrick → Remove. Nothing else is left
-   behind (no settings, no stored data).
+```sh
+python3 tools/reinstall.py        # requires: pip install marionette_driver
+```
 
-**Edit → retest loop** (when a new build is ready): rebuild the xpi, install it
-again the same way — Thunderbird replaces the old version in place. Already-open
-compose windows from before the update should be closed and reopened once.
+- Thunderbird already runs with Marionette → live reinstall, ~3 s, no restart
+- Thunderbird runs without Marionette → clean quit + relaunch with `-marionette`
+  (happens once; afterwards every run is live)
+- Thunderbird closed → it is launched for you
 
-Alternative for quick iterations: **about:debugging → This Thunderbird →
-Load Temporary Add-on → `manifest.json`** in the repo. Reload button reapplies
-edits instantly, but it disappears on every Thunderbird restart (and cannot be
-active while the permanent install exists).
+Thunderbird keeps the Marionette port open on localhost afterwards — that is
+what makes the no-restart reinstalls possible. If that bothers you, quit
+Thunderbird normally; the next `reinstall.py` run just starts it again.
+
+Manual alternative: build `magictrick.xpi`
+(`zip magictrick.xpi manifest.json ai.js prompts.js background.js compose.js icons/`)
+→ **Tools → Add-ons and Themes → ⚙ → Install Add-on From File…** → confirm.
+Removing later is one click in the Add-ons Manager; nothing is left behind.
 
 ## What to test (5 minutes)
 

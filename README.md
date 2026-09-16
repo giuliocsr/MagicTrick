@@ -72,6 +72,9 @@ draft region replaced ◀───────────  corrected text
 ### For development
 
 ```sh
+# Deploy the current working tree into your real Thunderbird (build + reinstall)
+python3 tools/reinstall.py
+
 # AI endpoint chain + prompt construction (plain Node, hits the live endpoints)
 node --test tests/ai.test.mjs
 
