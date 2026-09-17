@@ -5,7 +5,7 @@ button in the compose window that fixes the grammar of what you just wrote, draf
 when you haven't written anything yet, and always leaves one press of <kbd>Ctrl+Z</kbd>
 between you and regret.
 
-**Free. Keyless. No setup, no accounts, no API keys, no options page.**
+**Free. Keyless. No setup, no accounts, no API keys.**
 
 ## What it does
 
@@ -67,14 +67,14 @@ draft region replaced ◀───────────  corrected text
 ### From source (recommended for now)
 
 1. Download or clone this repository.
-2. Zip the extension files (not the repo folder itself):
+2. Build the package (or run `python3 tools/reinstall.py`, which also installs it):
    ```sh
-   zip magictrick.xpi manifest.json background.js ai.js compose.js icons/
+   zip magictrick.xpi manifest.json ai.js prompts.js contacts.js attachments.js background.js compose.js options.html options.js options.css icons/*.png
    ```
 3. In Thunderbird: **Tools → Add-ons and Themes → ⚙ → Install Add-on From File…**
    → select `magictrick.xpi`.
-4. Removal is the usual one click in the Add-ons Manager. Nothing else is left behind —
-   MagicTrick stores no settings and keeps no data.
+4. Removal is the usual one click in the Add-ons Manager. Aside from attachment-rule
+   files you registered yourself, nothing is left behind.
 
 ### For development
 
