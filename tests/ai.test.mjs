@@ -10,7 +10,8 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { AI_ENDPOINTS, aiCleanOutput, aiComplete } = require("../ai.js");
-const { buildMessages, classifyRecipients } = require("../prompts.js");
+const { buildMessages, stripAnswerPreamble, classifyRecipients } = require("../prompts.js");
+const { parseMailbox } = require("../contacts.js");
 
 /* ------------------------------------------------------------------ */
 /* Prompt construction                                                 */
@@ -72,6 +73,51 @@ test("classifyRecipients: no greeting → everyone Cc", () => {
 
 test("classifyRecipients: empty candidates", () => {
   assert.deepEqual(classifyRecipients("Hello Pietro", []), { to: [], cc: [] });
+});
+
+/* ------------------------------------------------------------------ */
+/* Answer cleanup: replace, never annotate                            */
+/* ------------------------------------------------------------------ */
+
+test("stripAnswerPreamble removes a leading 'here is the corrected text' line", () => {
+  assert.equal(stripAnswerPreamble("Here is the corrected text:\n\nHello."), "Hello.");
+  assert.equal(stripAnswerPreamble("Corrected version:\nHello."), "Hello.");
+  assert.equal(stripAnswerPreamble("Here's the corrected draft:\nHello."), "Hello.");
+  // A normal first line must survive untouched.
+  assert.equal(stripAnswerPreamble("Corrected: this is my actual sentence."), "Corrected: this is my actual sentence.");
+  assert.equal(stripAnswerPreamble("Hello Pietro, how are you?"), "Hello Pietro, how are you?");
+});
+
+test("fix prompt demands replacement output, not annotations", () => {
+  const messages = buildMessages("fix", "", "Amber alert does not vork.", "");
+  assert.match(messages[0].content, /REPLACE the draft verbatim/);
+  assert.match(messages[0].content, /no lists of errors/);
+});
+
+test("formatted drafts travel as HTML with preservation rules", () => {
+  const messages = buildMessages("fix", "", "bullet text", "", "<ul><li>Amber alert</li></ul>");
+  assert.match(messages[1].content, /DRAFT TO CORRECT \(HTML\)/);
+  assert.match(messages[1].content, /<ul><li>Amber alert<\/li><\/ul>/);
+  assert.match(messages[0].content, /EXACTLY the \nsame tags|EXACTLY the same tags/);
+  const plain = buildMessages("fix", "", "plain", "");
+  assert.doesNotMatch(plain[1].content, /\(HTML\)/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Mailbox header parsing (contact sources)                            */
+/* ------------------------------------------------------------------ */
+
+test("parseMailbox understands all common header shapes", () => {
+  assert.deepEqual(parseMailbox("Giorgio Rossi <hiimgiorgio@gmail.com>"), {
+    name: "Giorgio Rossi",
+    email: "hiimgiorgio@gmail.com",
+  });
+  assert.deepEqual(parseMailbox("hiimgiorgio@gmail.com"), {
+    name: "hiimgiorgio@gmail.com",
+    email: "hiimgiorgio@gmail.com",
+  });
+  assert.deepEqual(parseMailbox('"Doe, Jane" <jane@x.test>'), { name: "Doe, Jane", email: "jane@x.test" });
+  assert.equal(parseMailbox(""), null);
 });
 
 /* ------------------------------------------------------------------ */

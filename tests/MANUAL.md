@@ -31,12 +31,14 @@ Removing later is one click in the Add-ons Manager; nothing is left behind.
 
 Write an email to yourself; you never need to send it.
 
-1. **Button** — wand-with-sparkles icon in the compose toolbar; tooltip reads
-   "MagicTrick — fix this email with AI" (the "MagicTrick" text label shows when
-   the toolbar is in "icons and text" mode — right-click toolbar to switch).
-2. **One-click grammar fix** — draft a few sentences with obvious errors,
-   click MagicTrick: ✨ badge appears while working, corrected text lands within
-   a few seconds. Greeting, line breaks and paragraphs survive.
+1. **Button dropdown** — clicking the wand opens a native dropdown (✨ Polish
+   this draft / MagicTrick with prompt… / Manage attachment rules…).
+2. **Grammar fix** — draft a few sentences with obvious errors, run "Polish
+   this draft" (or Ctrl+Shift+G): ✨ badge appears while working, corrected
+   text lands within seconds. The answer REPLACES the draft — it must never
+   be an annotation like "Incorrect spelling: … should be …".
+2b. **Formatting** — draft with a bullet list (and an error inside a bullet);
+   after polishing the list must still be a list.
 3. **Ctrl+Z** — one press restores the exact previous draft.
 4. **Reply safety** — reply to a real email, click MagicTrick: only your text
    above the quote changes; the quoted conversation and your signature stay
@@ -49,10 +51,10 @@ Write an email to yourself; you never need to send it.
    Esc cancels, ✕ closes.
 8. **Failure path** — disconnect the network, click MagicTrick: after the
    timeouts you get a notification and the draft is unchanged.
-9. **Recipient assistant** — with a contact "Pietro Bianchi" (any real address
-   book entry), draft "Hello Pietro, how are you? Giorgio has attached the
-   correspondence." (Giorgio must also be a contact) and run MagicTrick:
-   Pietro appears in To, Giorgio in Cc, notification lists both.
+9. **Recipient assistant** — draft "Hello Pietro, how are you? Giorgio has
+   attached the correspondence." where Pietro is an address-book contact and
+   Giorgio is just someone you exchange email with (no contact entry): Pietro
+   appears in To, Giorgio in Cc, notification lists both.
 10. **Attachment rules** — right-click the button → "manage attachment
     rules…" → register phrase "reference letters" with a small PDF. Draft
     "Attached you can find my reference letters." and run MagicTrick:

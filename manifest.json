@@ -1,46 +1,49 @@
 {
   "manifest_version": 2,
   "name": "MagicTrick",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "One-click AI email polishing for Thunderbird: grammar fix, reply drafting, recipient assistance and attachment rules. Free, keyless, no setup.",
-
   "browser_specific_settings": {
     "gecko": {
       "id": "magictrick@giuliocsr.github.io",
       "strict_min_version": "128.0"
     }
   },
-
   "icons": {
     "16": "icons/wand-16.png",
     "32": "icons/wand-32.png",
     "64": "icons/wand-64.png"
   },
-
   "background": {
-    "scripts": ["ai.js", "prompts.js", "contacts.js", "attachments.js", "background.js"]
+    "scripts": [
+      "ai.js",
+      "prompts.js",
+      "contacts.js",
+      "attachments.js",
+      "background.js"
+    ]
   },
-
   "options_ui": {
-    "page": "options.html"
+    "page": "options.html",
+    "open_in_tab": true
   },
-
   "compose_action": {
-    "default_title": "MagicTrick — fix this email with AI",
+    "default_title": "MagicTrick \u2014 fix this email with AI",
     "default_label": "MagicTrick",
     "default_icon": {
       "16": "icons/wand-16.png",
       "32": "icons/wand-32.png",
       "64": "icons/wand-64.png"
-    }
+    },
+    "type": "menu"
   },
-
   "compose_scripts": [
     {
-      "js": ["compose.js"]
+      "js": [
+        "compose.js"
+      ]
     }
   ],
-
   "commands": {
     "_execute_compose_action": {
       "suggested_key": {
@@ -49,9 +52,13 @@
       "description": "Run MagicTrick on the current draft"
     }
   },
-
-  "permissions": ["compose", "addressBooks", "menus", "notifications"],
-
+  "permissions": [
+    "compose",
+    "addressBooks",
+    "messagesRead",
+    "menus",
+    "notifications"
+  ],
   "host_permissions": [
     "https://api.llm7.io/*",
     "https://text.pollinations.ai/*"

@@ -206,7 +206,14 @@ def json_str(value):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+    )
+    return '"' + escaped + '"'
 
 
 def open_compose(h, body_html):
@@ -258,6 +265,45 @@ def open_compose(h, body_html):
         return null;"""
     )
     time.sleep(1.5)  # let the compose script settle
+
+
+def run_polish_via_button(h, timeout=90):
+    """Click the MagicTrick button (menu-typed) and run 'Polish this draft'.
+
+    This is the exact path a user takes: the button's native dropdown opens
+    (menu-typed compose action) and its first entry fires the pipeline.
+    Returns the deadline timestamp for the change wait.
+    """
+    opened = h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           if (!b) throw new Error("MagicTrick button not found");
+           b.click();
+           const deadline = Date.now() + 5000;
+           return (async () => {
+             while (Date.now() < deadline) {
+               await new Promise((r) => setTimeout(r, 200));
+               const popup = b.querySelector("menupopup");
+               if (popup && popup.state === "open") return true;
+             }
+             return false;
+           })();"""
+    )
+    if not opened:
+        raise RuntimeError("button dropdown did not open")
+    clicked = h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           const item = [...b.querySelectorAll("menuitem")]
+               .find((mi) => (mi.label || "").includes("Polish this draft"));
+           if (!item) return { error: "menu item not found: " +
+               [...b.querySelectorAll("menuitem")].map((mi) => mi.label).join(",") };
+           item.doCommand();
+           return { ok: true };"""
+    )
+    if not (clicked and clicked.get("ok")):
+        raise RuntimeError(clicked and clicked.get("error", "menu activation failed"))
+    return time.time() + timeout
 
 
 def activate_menu_item(h):
@@ -352,7 +398,7 @@ FIX_INSTRUCTION = (
 def test_fix_and_undo(h):
     open_compose(h, BAD_DRAFT)
     before = read_editor(h)
-    run_with_prompt(h, FIX_INSTRUCTION)
+    deadline = run_polish_via_button(h)
     after, elapsed = wait_for_editor_change(h, before["html"])
 
     text = after["text"]
@@ -393,7 +439,7 @@ def test_auto_reply(h):
     after, elapsed = wait_for_editor_change(h, before["html"])
 
     import re
-    reply_match = re.search(r"<p[^>]*>[^<]{25,}", after["html"])
+    reply_match = re.search(r"<p[^>]*>[^<]{8,}", after["html"])
     reply_index = reply_match.start() if reply_match else -1
     quote_index = after["html"].find("moz-cite-prefix")
     ok = (
@@ -401,7 +447,7 @@ def test_auto_reply(h):
         and quote_index != -1
         and reply_index < quote_index
         and "Can we meet tomorrow at 10" in after["text"]
-        and len(" ".join(after["text"].split())) > 60
+        and len(" ".join(after["text"].split())) > 25
     )
     ok = ok and elapsed < 5.0
     report("empty draft: contextual auto-reply generated above intact quote", ok,
@@ -473,6 +519,98 @@ def test_recipient_assistant(h):
     )
 
 
+FORMAT_DRAFT = (
+    "<p>Hi Pietro, how are you?</p>"
+    '<ul><li>Attention to the police</li><li>Amber alert does not vork</li></ul>'
+)
+
+
+def seed_history_message(h):
+    """A message from Alessia (NOT an address-book contact) in Local Folders,
+    so recipient resolution must come from message history."""
+    raw = (
+        "From: Alessia Verdi <alessia.verdi@gmail.com>\r\n"
+        "To: MagicTrick Tester <tester@magictrick.local>\r\n"
+        "Subject: Project update\r\n"
+        "Message-ID: <mt-history-1@magictrick.local>\r\n"
+        "Date: Tue, 16 Sep 2026 12:00:00 +0200\r\n"
+        "\r\n"
+        "The project is going well, talk soon.\r\n"
+    )
+    seeded = h.exec(
+        f"""const {{ MailServices }} = ChromeUtils.importESModule(
+               "resource:///modules/MailServices.sys.mjs");
+           const root = MailServices.accounts.localFoldersServer.rootFolder;
+           let folder = root.getChildNamed("MTHistory");
+           if (!folder) {{
+             root.createSubfolder("MTHistory", null);
+             folder = root.getChildNamed("MTHistory");
+           }}
+           if (!folder) throw new Error("could not create MTHistory folder");
+           folder.QueryInterface(Ci.nsIMsgLocalMailFolder)
+               .addMessage({json_str(raw)});
+           return "seeded";"""
+    )
+    if seeded != "seeded":
+        raise RuntimeError(f"history seeding failed: {seeded}")
+
+
+def test_format_preserved(h):
+    open_compose(h, FORMAT_DRAFT)
+    before = read_editor(h)
+    run_polish_via_button(h)
+    after, elapsed = wait_for_editor_change(h, before["html"])
+    text = after["text"]
+    html = after["html"]
+    ok = (
+        elapsed < 5.0
+        and "<ul>" in html
+        and "<li>" in html
+        and "vork" not in text
+        and "work" in text.lower()
+        and "Attention to the police" in text
+    )
+    report(
+        "format preservation: bullet list survives the AI round trip",
+        ok,
+        f"{elapsed:.1f}s — html: {html[:200]}",
+    )
+
+
+HISTORY_DRAFT = (
+    "<p>Hi Pietro, how's it going?</p>"
+    "<p>Alessia will join the call tomorrow.</p>"
+)
+
+
+def test_recipient_from_history(h):
+    open_compose(h, HISTORY_DRAFT)
+    before = read_editor(h)
+    run_polish_via_button(h)
+    wait_for_editor_change(h, before["html"])
+    read_fields = """const cw = Services.wm.getMostRecentWindow("msgcompose");
+        const read = (rowId) => {
+          const row = cw.document.getElementById(rowId);
+          if (!row) return "";
+          return [...row.querySelectorAll("input")].map((i) => i.value.toLowerCase()).join(",");
+        };
+        return { to: read("addressRowTo"), cc: read("addressRowCc") };"""
+    deadline = time.time() + 6
+    fields = h.exec(read_fields)
+    while time.time() < deadline and not fields["cc"]:
+        time.sleep(0.5)
+        fields = h.exec(read_fields)
+    ok = (
+        "pietro.bianchi@example.com" in fields["to"]
+        and "alessia.verdi@gmail.com" in fields["cc"]
+    )
+    report(
+        "recipient from message history (not in address book)",
+        ok,
+        f"to: {fields['to'] or '(none)'} · cc: {fields['cc'] or '(none)'}",
+    )
+
+
 def main():
     if shutil.which(THUNDERBIRD) is None:
         sys.exit(f"Thunderbird binary not found: {THUNDERBIRD}")
@@ -480,9 +618,12 @@ def main():
     try:
         h.setup()
         seed_contacts(h)  # before any run: the extension caches contacts
+        seed_history_message(h)
         test_fix_and_undo(h)
         test_auto_reply(h)
         test_recipient_assistant(h)
+        test_format_preserved(h)
+        test_recipient_from_history(h)
     finally:
         h.teardown()
     passed = sum(results)

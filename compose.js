@@ -6,6 +6,8 @@
  *   - splits it into the user's draft and the quoted thread/signature
  *   - applies AI results to the draft region ONLY, as a single editor
  *     transaction — so one Ctrl+Z reverts the whole MagicTrick edit
+ *     (plain-text answers become paragraphs; HTML answers keep the draft's
+ *     formatting, sanitised to a safe tag whitelist)
  *   - shows the in-window input bar for custom prompts
  *
  * The script works in TWO injection contexts, depending on the Thunderbird
@@ -124,9 +126,18 @@
     return "";
   }
 
+  /** Serialised HTML of the draft region (nodes [0, end)). */
+  function regionHtml(doc, body, end) {
+    const wrapper = doc.createElement("div");
+    for (let i = 0; i < end; i++) {
+      wrapper.appendChild(body.childNodes[i].cloneNode(true));
+    }
+    return wrapper.innerHTML;
+  }
+
   /**
-   * Collect the draft text and the quoted conversation text.
-   * @returns {{draftText: string, conversationText: string, error?: string}}
+   * Collect the draft text, the quoted conversation text and the draft HTML.
+   * @returns {{draftText: string, conversationText: string, draftHtml: string, error?: string}}
    */
   function collect() {
     const doc = getEditorDoc();
@@ -147,6 +158,7 @@
     return {
       draftText: draft.replace(/\n{3,}/g, "\n\n").trim(),
       conversationText: conversation.replace(/\n{3,}/g, "\n\n").trim(),
+      draftHtml: regionHtml(doc, body, boundary).trim(),
     };
   }
 
@@ -172,12 +184,45 @@
       .join("");
   }
 
+  const SAFE_TAGS = new Set([
+    "P", "DIV", "BR", "UL", "OL", "LI", "B", "STRONG", "I", "EM", "U",
+    "A", "H1", "H2", "H3", "H4", "H5", "H6", "SPAN",
+  ]);
+
   /**
-   * Replace the draft region with `text` and return {ok, error?}.
+   * Whitelist sanitiser for AI-returned HTML: keeps the formatting tags we
+   * asked the model to preserve and drops everything else (unwrapping, not
+   * deleting, so text survives). Only http(s)/mailto links survive on <a>.
+   */
+  function sanitizeHtml(html) {
+    const doc = getEditorDoc();
+    const holder = doc.createElement("div");
+    holder.innerHTML = html;
+    const sanitize = (element) => {
+      for (const child of [...element.children]) sanitize(child);
+      if (!SAFE_TAGS.has(element.tagName)) {
+        element.replaceWith(...element.childNodes);
+        return;
+      }
+      if (element.tagName === "A") {
+        const href = element.getAttribute("href") || "";
+        if (!/^(https?:|mailto:)/i.test(href)) element.removeAttribute("href");
+        element.removeAttribute("target");
+      } else {
+        for (const attr of [...element.attributes]) element.removeAttribute(attr.name);
+      }
+    };
+    sanitize(holder);
+    return holder.innerHTML;
+  }
+
+  /**
+   * Replace the draft region and return {ok, error?}. `options.html` marks the
+   * text as pre-formatted (sanitised) HTML; plain text becomes paragraphs.
    * The replacement goes through execCommand so the editor records it as one
    * transaction: a single Ctrl+Z restores the previous draft exactly.
    */
-  function apply(text) {
+  function apply(text, options) {
     const doc = getEditorDoc();
     if (!doc) return { ok: false, error: "editor not found" };
     try {
@@ -186,6 +231,8 @@
       const win = doc.defaultView;
       win.focus();
 
+      const html = options && options.html ? sanitizeHtml(text) : htmlFromText(text);
+
       const selection = win.getSelection();
       const range = doc.createRange();
       range.setStart(body, 0);
@@ -193,7 +240,7 @@
       selection.removeAllRanges();
       selection.addRange(range);
 
-      const ok = doc.execCommand("insertHTML", false, htmlFromText(text));
+      const ok = doc.execCommand("insertHTML", false, html);
       selection.collapseToEnd();
       return ok ? { ok: true } : { ok: false, error: "the editor refused the insertion" };
     } catch (err) {
@@ -202,49 +249,40 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * Custom-prompt input bar (rendered inside the editor document)
+   * Custom-prompt input bar (rendered inside the editor document,
+   * styled with system colours so it matches the Thunderbird UI)
    * ------------------------------------------------------------------ */
 
   const BAR_STYLE = `
     #magictrick-bar {
       position: fixed;
-      top: 8px;
+      top: 6px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 2147483647;
       display: flex;
-      gap: 8px;
-      align-items: center;
-      max-width: min(92%, 720px);
-      padding: 8px 10px;
-      background: #2b2233;
-      color: #f5f0fa;
-      border: 1px solid #6b5a8a;
-      border-radius: 10px;
-      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
-      font: 13px sans-serif;
+      gap: 4px;
+      padding: 4px;
+      background: -moz-Dialog;
+      color: -moz-DialogText;
+      border: 1px solid ThreeDShadow;
+      border-radius: 4px;
+      box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.25);
+      font: message-box;
     }
-    #magictrick-bar .mt-spark { font-size: 15px; }
     #magictrick-bar input {
-      flex: 1;
-      min-width: 200px;
-      padding: 5px 8px;
-      border: 1px solid #6b5a8a;
-      border-radius: 6px;
-      background: #1c1622;
-      color: #f5f0fa;
-      font: 13px sans-serif;
+      width: 34em;
+      max-width: 75vw;
+      padding: 3px 6px;
+      border: 1px solid ThreeDShadow;
+      background: Field;
+      color: FieldText;
+      font: message-box;
     }
     #magictrick-bar button {
-      padding: 5px 10px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font: 13px sans-serif;
+      font: message-box;
+      padding: 3px 12px;
     }
-    #magictrick-bar .mt-go { background: #8a63d2; color: #fff; }
-    #magictrick-bar .mt-go:hover { background: #9b78dc; }
-    #magictrick-bar .mt-cancel { background: transparent; color: #cfc4e0; }
   `;
 
   /**
@@ -270,10 +308,8 @@
       const bar = doc.createElement("div");
       bar.id = "magictrick-bar";
       bar.innerHTML =
-        '<span class="mt-spark">✨</span>' +
-        '<input type="text" placeholder="Your instruction — replaces the built-in one. Enter to cast, Esc to cancel.">' +
-        '<button class="mt-go" title="Run">Cast</button>' +
-        '<button class="mt-cancel" title="Cancel">✕</button>';
+        '<input type="text" placeholder="Instruction for MagicTrick — Enter to run, Esc to cancel">' +
+        '<button class="mt-go">OK</button>';
       doc.body.appendChild(bar);
 
       const input = bar.querySelector("input");
@@ -286,7 +322,6 @@
       };
 
       bar.querySelector(".mt-go").addEventListener("click", () => close(input.value));
-      bar.querySelector(".mt-cancel").addEventListener("click", () => close(null));
       input.addEventListener("keydown", (event) => {
         event.stopPropagation();
         if (event.key === "Enter") close(input.value.trim() ? input.value : null);
@@ -313,7 +348,7 @@
     }
 
     if (msg.command === "apply") {
-      return Promise.resolve(apply(String(msg.text || "")));
+      return Promise.resolve(apply(String(msg.text || ""), { html: !!msg.html }));
     }
 
     if (msg.command === "customPrompt") {

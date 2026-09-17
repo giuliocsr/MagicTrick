@@ -1,17 +1,17 @@
 /**
  * MagicTrick — background orchestration.
  *
- * Listens for the compose-window toolbar button (and its context menu),
- * coordinates the compose script (draft extraction / replacement) and the AI
- * backend chain, and keeps the button state and error notifications in order.
+ * The compose button is a menu-typed action: clicking it opens the native
+ * dropdown (like Thunderbird's attach button). The first entry runs the
+ * polish pipeline; Ctrl+Shift+G runs it directly.
  *
  * Flow of a run:
- *   composeAction click / prompt bar submit / menu item
+ *   menu "Polish this draft" / Ctrl+Shift+G / prompt bar submit
  *     → tabs.executeScript (idempotent compose.js injection)
  *     → tabs.sendMessage(tab, {command:"collect"})   (compose.js)
  *     → contact candidates + attachment rules        (contacts.js / attachments.js)
- *     → one AI call (draft + thread context)         (ai.js / prompts.js)
- *     → apply corrected text (single undoable transaction)
+ *     → one AI call (draft + thread, HTML when formatted) (ai.js / prompts.js)
+ *     → apply corrected text (single undoable transaction, format preserved)
  *     → merge deterministic To/Cc additions, attach matching files
  */
 "use strict";
@@ -19,6 +19,9 @@
 /* global MagicTrickAI, MagicTrickPrompts, MagicTrickContacts, MagicTrickAttachments */
 
 const BUTTON_TITLE = "MagicTrick — fix this email with AI";
+
+/** True when the HTML carries formatting the AI must preserve. */
+const FORMATTING_RE = /<(ul|ol|li|b|strong|i|em|u|a\s|table|h[1-6])\b/i;
 
 /** Tab ids with a run currently in flight (one run per compose window). */
 const inFlight = new Set();
@@ -34,28 +37,35 @@ messenger.composeScripts
 // otherwise make the first click of a session unnecessarily slow.
 MagicTrickAI.aiComplete([{ role: "user", content: "ok" }]).catch(() => {});
 
-messenger.composeAction.onClicked.addListener((tab) => {
-  if (tab && tab.id != null) runMagicTrick(tab.id, { mode: "auto" });
+// The button's native dropdown (menu-typed compose action)…
+messenger.menus.create({
+  id: "magictrick-fix",
+  title: "✨ Polish this draft",
+  contexts: ["compose_action_menu", "compose_action"],
 });
-
+messenger.menus.create({ type: "separator", contexts: ["compose_action_menu", "compose_action"] });
 messenger.menus.create({
   id: "magictrick-with-prompt",
   title: "MagicTrick with prompt…",
-  contexts: ["compose_action"],
+  contexts: ["compose_action_menu", "compose_action"],
 });
-
 messenger.menus.create({
   id: "magictrick-manage-attachments",
-  title: "MagicTrick: manage attachment rules…",
-  contexts: ["compose_action"],
+  title: "Manage attachment rules…",
+  contexts: ["compose_action_menu", "compose_action"],
 });
 
 messenger.menus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "magictrick-manage-attachments") {
-    messenger.runtime.openOptionsPage().catch(() => {});
+  if (!tab || tab.id == null) return;
+  if (info.menuItemId === "magictrick-fix") {
+    runMagicTrick(tab.id, { mode: "auto" });
     return;
   }
-  if (info.menuItemId === "magictrick-with-prompt" && tab && tab.id != null) {
+  if (info.menuItemId === "magictrick-manage-attachments") {
+    openRulesPage();
+    return;
+  }
+  if (info.menuItemId === "magictrick-with-prompt") {
     // Ask the compose script to show the in-window prompt bar; it will call us
     // back with {type:"run-custom", prompt} when the user submits it.
     ensureComposeScript(tab.id)
@@ -63,6 +73,37 @@ messenger.menus.onClicked.addListener((info, tab) => {
       .catch(() => notifyConnectionProblem());
   }
 });
+
+// Ctrl+Shift+G: run the polish pipeline on the active compose window.
+messenger.commands?.onCommand.addListener((command) => {
+  if (command !== "_execute_compose_action") return;
+  findActiveComposeTab().then((tabId) => {
+    if (tabId != null) runMagicTrick(tabId, { mode: "auto" });
+  });
+});
+
+async function findActiveComposeTab() {
+  try {
+    const active = await messenger.tabs.query({ active: true });
+    const compose = active.find((t) => t.type === "messageCompose");
+    return compose ? compose.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Open the attachment-rules page (options page), with a robust fallback. */
+async function openRulesPage() {
+  try {
+    await messenger.runtime.openOptionsPage();
+  } catch {
+    try {
+      await messenger.tabs.create({ url: messenger.runtime.getURL("options.html") });
+    } catch {
+      notify("Could not open the attachment-rules page.");
+    }
+  }
+}
 
 messenger.runtime.onMessage.addListener((msg, sender) => {
   if (msg && msg.type === "run-custom" && sender.tab && sender.tab.id != null) {
@@ -91,18 +132,19 @@ async function runMagicTrick(tabId, opts) {
   try {
     await ensureComposeScript(tabId);
 
-    let draft, conversation;
+    let extract;
     try {
-      const extract = await messenger.tabs.sendMessage(tabId, { command: "collect" });
+      extract = await messenger.tabs.sendMessage(tabId, { command: "collect" });
       if (extract && extract.error) throw new Error(extract.error);
-      draft = extract ? extract.draftText : "";
-      conversation = extract ? extract.conversationText : "";
     } catch (err) {
       throw new Error(
         "Could not reach this compose window. " +
           "If it was open before MagicTrick was installed or updated, close and reopen it, then try again."
       );
     }
+    const draft = extract ? extract.draftText : "";
+    const conversation = extract ? extract.conversationText : "";
+    const draftHtml = extract ? extract.draftHtml || "" : "";
 
     const mode = opts.mode === "custom" ? "custom" : !draft.trim() ? "reply" : "fix";
     if (mode === "reply" && !conversation.trim()) {
@@ -114,10 +156,28 @@ async function runMagicTrick(tabId, opts) {
     const candidates = await MagicTrickContacts.findContactCandidates(draft).catch(() => []);
     const attachments = await MagicTrickAttachments.matchedAttachments(draft).catch(() => []);
 
-    const messages = MagicTrickPrompts.buildMessages(mode, opts.prompt, draft, conversation);
-    const answer = await MagicTrickAI.aiComplete(messages);
+    // Formatted drafts travel as HTML so lists/links/emphasis survive the trip.
+    const formatted = FORMATTING_RE.test(draftHtml);
+    const messages = MagicTrickPrompts.buildMessages(
+      mode,
+      opts.prompt,
+      draft,
+      conversation,
+      formatted ? draftHtml : null
+    );
+    const answer = MagicTrickPrompts.stripAnswerPreamble(await MagicTrickAI.aiComplete(messages));
 
-    const applied = await messenger.tabs.sendMessage(tabId, { command: "apply", text: answer });
+    let applyMsg = { command: "apply", text: answer };
+    if (formatted) {
+      if (FORMATTING_RE.test(answer)) {
+        applyMsg = { command: "apply", text: answer, html: true };
+      } else {
+        // The model lost the formatting — fall back to plain text rather
+        // than inserting a mangled structure.
+        applyMsg = { command: "apply", text: answer.replace(/<[^>]+>/g, "") };
+      }
+    }
+    const applied = await messenger.tabs.sendMessage(tabId, applyMsg);
     if (!applied || !applied.ok) {
       throw new Error((applied && applied.error) || "Could not update the compose window.");
     }

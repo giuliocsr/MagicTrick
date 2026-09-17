@@ -11,12 +11,15 @@ between you and regret.
 
 | Action | Result |
 |---|---|
-| Click **MagicTrick** with text in the composer | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. |
-| Click **MagicTrick** in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
-| Right-click the button → **MagicTrick with prompt…** | An input bar appears inside the composer — type any instruction ("make it more formal", "translate to German", "shorten to 3 sentences") and press <kbd>Enter</kbd>. |
-| <kbd>Ctrl+Shift+G</kbd> | Same as clicking the button. |
-| Right-click → **MagicTrick: manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
-| Mentions of your contacts | People from your address books whose names appear in the draft are added automatically: the person greeted goes to **To**, other referenced contacts to **Cc**. A notification always lists what was added. |
+| Button → **✨ Polish this draft** (or <kbd>Ctrl+Shift+G</kbd>) | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. Formatted drafts (bullet lists, links, emphasis) travel as HTML and keep their formatting. |
+| **✨ Polish this draft** in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
+| Button → **MagicTrick with prompt…** | A minimal, system-styled input bar appears inside the composer — type any instruction ("make it more formal", "translate to German") and press <kbd>Enter</kbd>. |
+| Button → **Manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
+| Mentions of your contacts | People whose names appear in the draft are added automatically — from your address books **and from your message history**: the person greeted goes to **To**, other referenced people to **Cc**. A notification always lists what was added. |
+
+Clicking the wand opens a native dropdown menu (like Thunderbird's attach
+button); the polish action is its first entry, and <kbd>Ctrl+Shift+G</kbd>
+runs it directly without opening the menu.
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
 When you are replying, the quoted conversation is sent to the model **as read-only
@@ -52,6 +55,13 @@ draft region replaced ◀───────────  corrected text
   messages and your signature are off-limits by construction.
 - Replacement happens through the editor's command system (`insertHTML` on the selected
   draft range), which records **one transaction**: a single <kbd>Ctrl+Z</kbd> undoes it.
+- Formatted drafts are sent as HTML with strict "same tags, same structure" rules; the
+  answer is sanitised against a whitelist (paragraphs, lists, emphasis, links) and, if
+  the model drops the formatting, MagicTrick falls back to clean plain text instead of
+  inserting mangled markup.
+- Recipients are picked **locally**: address books plus recent correspondents (message
+  history) are scanned for people whose names appear in the draft — the AI never chooses
+  addresses, so nothing can be invented.
 - Two fast keyless endpoints are raced **in parallel** (LLM7 Mistral Nemo and
   Pollinations `openai-fast`); the first valid answer wins and the losing request is
   aborted, with a slower backstop endpoint if both fail. Typical turnaround is well
@@ -110,8 +120,9 @@ icons/          wand-and-sparkles icon (SVG source + rendered PNGs)
 
 ## Limitations
 
-- Inline formatting inside the corrected region (bold, links) becomes plain text; the
-  quoted thread and signature are preserved untouched.
+- Formatting preservation depends on the model cooperating: if it drops the HTML
+  structure, MagicTrick falls back to plain text (the notification still shows the edit).
+  The quoted thread and signature are always preserved untouched.
 - The editor technique relies on `execCommand`, which browsers deprecate but Thunderbird's
   editor still implements natively. Tested on Thunderbird 128–155; re-test on major
   upgrades.
