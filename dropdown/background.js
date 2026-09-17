@@ -12,12 +12,6 @@ const MAIN_EXTENSION = "magictrick@giuliocsr.github.io";
 const CONTEXTS = ["compose_action_menu"];
 
 messenger.menus.create({
-  id: "mt-fix",
-  title: "✨ Polish this draft",
-  contexts: CONTEXTS,
-});
-messenger.menus.create({ type: "separator", contexts: CONTEXTS });
-messenger.menus.create({
   id: "mt-prompt",
   title: "MagicTrick with prompt…",
   contexts: CONTEXTS,
@@ -30,7 +24,6 @@ messenger.menus.create({
 
 messenger.menus.onClicked.addListener((info) => {
   const commands = {
-    "mt-fix": "fix",
     "mt-prompt": "prompt",
     "mt-rules": "rules",
   };

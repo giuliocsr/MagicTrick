@@ -17,11 +17,19 @@ between you and regret.
 | **▾ dropdown → Manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
 | Mentions of your contacts | People whose names appear in the draft are added automatically — from your address books **and from your message history**: the person greeted goes to **To**, other referenced people to **Cc**. A notification always lists what was added. |
 
-The toolbar control is a **split button** like Thunderbird's own attach/save
-buttons: `[ 🪄 MagicTrick ][ ▾ ]` — the wand polishes in one click, the ▾
-opens the menu with the additional actions. Thunderbird allows each extension
-exactly one compose button, so the ▾ half ships as a tiny companion add-on
-(`dropdown/`, built and installed together with the main one).
+The toolbar control mirrors Thunderbird's attach/save split buttons:
+`[ 🪄 MagicTrick ][ ▾ ]` — the wand polishes in one click, the ▾ opens the
+menu with the secondary actions (prompt window, attachment rules; polish
+lives on the wand itself, and in the wand's right-click menu).
+
+Thunderbird's extension API does not (yet) expose a unified split button:
+the native attach/save widgets are XUL `menu-button` types, while
+`compose_action` only supports `button` or `menu` (whole-button dropdown),
+and each extension gets exactly one compose button. The ▾ half therefore
+ships as a tiny companion add-on (`dropdown/`, built and installed together
+with the main one) that sits next to the wand and forwards its two entries
+to the main extension. If Thunderbird ever adds a `menu-button` type to
+`compose_action`, the pair collapses back into one button.
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
 When you are replying, the quoted conversation is sent to the model **as read-only

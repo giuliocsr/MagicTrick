@@ -42,7 +42,8 @@ messenger.composeAction.onClicked.addListener((tab) => {
   if (tab && tab.id != null) runMagicTrick(tab.id, { mode: "auto" });
 });
 
-// Right-click menu on the wand (the ▾ dropdown lives in the companion add-on).
+// Right-click menu on the wand (power users; the ▾ dropdown lives in the
+// companion add-on and deliberately has no polish entry — the wand IS polish).
 messenger.menus.create({
   id: "magictrick-fix",
   title: "✨ Polish this draft",

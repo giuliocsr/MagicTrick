@@ -305,42 +305,31 @@ def open_compose(h, body_html):
 
 
 def run_polish_via_button(h, timeout=90):
-    """Click the [▾] companion button and run its 'Polish this draft' entry.
-
-    This exercises the real split-button path: the companion dropdown opens
-    (menu-typed compose actions are not trust-gated), its entry forwards the
-    command to the main extension across add-ons, and the polish runs.
-    """
-    opened = h.exec(
+    """Run the polish pipeline through the wand's 'Polish this draft' menu
+    entry (synthetic clicks on plain action buttons are trust-rejected, but
+    context-menu items are not). Same pipeline as a real wand click."""
+    h.exec(
         """const cw = Services.wm.getMostRecentWindow("msgcompose");
-           const b = cw.document.getElementById(
-               "magictrick-menu_giuliocsr_github_io-composeAction-toolbarbutton");
-           if (!b) throw new Error("companion dropdown button not found");
-           b.click();
-           const deadline = Date.now() + 5000;
-           return (async () => {
-             while (Date.now() < deadline) {
-               await new Promise((r) => setTimeout(r, 200));
-               const popup = b.querySelector("menupopup");
-               if (popup && popup.state === "open") return true;
-             }
-             return false;
-           })();"""
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           if (!b) throw new Error("MagicTrick button not found");
+           const rect = b.getBoundingClientRect();
+           b.dispatchEvent(new cw.MouseEvent("contextmenu", {
+               bubbles: true, cancelable: true, view: cw, button: 2,
+               clientX: rect.x + 5, clientY: rect.y + 5 }));
+           return null;"""
     )
-    if not opened:
-        raise RuntimeError("companion dropdown did not open")
     clicked = h.exec(
         """const cw = Services.wm.getMostRecentWindow("msgcompose");
-           const b = cw.document.getElementById(
-               "magictrick-menu_giuliocsr_github_io-composeAction-toolbarbutton");
-           const item = [...b.querySelectorAll("menuitem")]
+           const item = [...cw.document.querySelectorAll("menuitem")]
                .find((mi) => (mi.label || "").includes("Polish this draft"));
            if (!item) return { error: "menu item not found" };
            item.doCommand();
+           const popup = item.closest("menupopup");
+           if (popup && typeof popup.hidePopup === "function") popup.hidePopup();
            return { ok: true };"""
     )
     if not (clicked and clicked.get("ok")):
-        raise RuntimeError(clicked and clicked.get("error", "dropdown activation failed"))
+        raise RuntimeError(clicked and clicked.get("error", "polish menu activation failed"))
     return time.time() + timeout
 
 
