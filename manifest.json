@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "MagicTrick",
-  "version": "1.0.0",
-  "description": "One-click AI grammar fix and reply drafting in the Thunderbird compose window. Free, keyless, no setup.",
+  "version": "1.1.0",
+  "description": "One-click AI email polishing for Thunderbird: grammar fix, reply drafting, recipient assistance and attachment rules. Free, keyless, no setup.",
 
   "browser_specific_settings": {
     "gecko": {
@@ -18,7 +18,11 @@
   },
 
   "background": {
-    "scripts": ["ai.js", "prompts.js", "background.js"]
+    "scripts": ["ai.js", "prompts.js", "contacts.js", "attachments.js", "background.js"]
+  },
+
+  "options_ui": {
+    "page": "options.html"
   },
 
   "compose_action": {
@@ -46,11 +50,10 @@
     }
   },
 
-  "permissions": ["compose", "menus", "notifications"],
+  "permissions": ["compose", "addressBooks", "menus", "notifications"],
 
   "host_permissions": [
     "https://api.llm7.io/*",
-    "https://gen.pollinations.ai/*",
     "https://text.pollinations.ai/*"
   ]
 }

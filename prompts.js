@@ -1,5 +1,5 @@
 /**
- * MagicTrick — prompt construction.
+ * MagicTrick — prompt construction and recipient classification.
  *
  * Kept free of Thunderbird APIs so it can be unit-tested in plain Node
  * (loaded both as a background script and via require()).
@@ -32,7 +32,10 @@ function buildMessages(mode, customPrompt, draftText, conversationText) {
           "\n\nYou are operating inside an email compose window. Respond ONLY with the complete text " +
           "that should replace the user's current draft. Plain text, no explanations, no markdown fences.",
       },
-      { role: "user", content: `${thread}=== CURRENT DRAFT ===\n${draftText.trim() || "(empty)"}` },
+      {
+        role: "user",
+        content: `${thread}=== CURRENT DRAFT ===\n${draftText.trim() || "(empty)"}`,
+      },
     ];
   }
 
@@ -69,7 +72,35 @@ function buildMessages(mode, customPrompt, draftText, conversationText) {
   ];
 }
 
-const MagicTrickPrompts = { buildMessages };
+/**
+ * Deterministic recipient classification — no AI involved.
+ *
+ * contacts.js already narrowed the address book down to contacts whose name
+ * appears in the draft. The person GREeTED (e.g. after "Hello X") belongs in
+ * To; every other referenced candidate goes to Cc. Keeping the AI out of this
+ * decision makes it fast, free of extra prompt tokens and 100% reliable.
+ *
+ * @param {string} draftText
+ * @param {Array<{name: string, email: string}>} candidates
+ * @returns {{to: string[], cc: string[]}}
+ */
+function classifyRecipients(draftText, candidates) {
+  const greeted = new Set();
+  const re = /\b(?:hello|hi|hey|dear|ciao|salve|buongiorno|good morning|good afternoon|good evening)\s+([\p{L}\p{M}'’-]+)/giu;
+  for (const match of String(draftText).matchAll(re)) {
+    greeted.add(match[1].toLowerCase());
+  }
+  const to = [];
+  const cc = [];
+  for (const candidate of candidates || []) {
+    const tokens = String(candidate.name).toLowerCase().split(/\s+/);
+    const isGreeted = tokens.some((token) => greeted.has(token));
+    (isGreeted ? to : cc).push(candidate.email);
+  }
+  return { to, cc };
+}
+
+const MagicTrickPrompts = { buildMessages, classifyRecipients };
 
 if (typeof globalThis !== "undefined") {
   globalThis.MagicTrickPrompts = MagicTrickPrompts;

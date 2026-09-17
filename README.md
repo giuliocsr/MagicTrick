@@ -15,6 +15,8 @@ between you and regret.
 | Click **MagicTrick** in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
 | Right-click the button → **MagicTrick with prompt…** | An input bar appears inside the composer — type any instruction ("make it more formal", "translate to German", "shorten to 3 sentences") and press <kbd>Enter</kbd>. |
 | <kbd>Ctrl+Shift+G</kbd> | Same as clicking the button. |
+| Right-click → **MagicTrick: manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
+| Mentions of your contacts | People from your address books whose names appear in the draft are added automatically: the person greeted goes to **To**, other referenced contacts to **Cc**. A notification always lists what was added. |
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
 When you are replying, the quoted conversation is sent to the model **as read-only
@@ -118,12 +120,20 @@ icons/          wand-and-sparkles icon (SVG source + rendered PNGs)
 - Anonymous endpoints are rate-limited in fair-use ways; heavy daily use may occasionally
   hit throttling (the fallback chain absorbs most of it).
 
+## Notes on recipient assistance
+
+Recipients are chosen **locally and deterministically** — the AI never picks
+addresses. Your address books are scanned for contacts whose name actually
+appears in the draft; the person greeted ("Hello Pietro") is added to To, other
+referenced contacts to Cc. Only those few names ever leave your machine (and
+only as part of the draft text itself, which is sent anyway). Remove an address
+by deleting its pill in the compose window as usual.
+
 ## Roadmap
 
 - [ ] Bring-your-own-endpoint mode (Z.AI free tier / OpenAI / local Ollama) for privacy
 - [ ] Selection-only correction (fix just the highlighted paragraph)
-- [ ] Recipient assistant: suggest To/CC/BCC additions found in the thread
-- [ ] Attachment rules: "when I write *attaching reference letters*, attach these files"
+- [ ] Attachment-rule suggestions via the context of the conversation
 
 ## License
 

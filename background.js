@@ -5,17 +5,18 @@
  * coordinates the compose script (draft extraction / replacement) and the AI
  * backend chain, and keeps the button state and error notifications in order.
  *
- * Flow of a "fix" run:
- *   composeAction click
+ * Flow of a run:
+ *   composeAction click / prompt bar submit / menu item
  *     → tabs.executeScript (idempotent compose.js injection)
  *     → tabs.sendMessage(tab, {command:"collect"})   (compose.js)
- *     → build prompt (draft + thread context)
- *     → aiComplete(...)                              (ai.js)
- *     → tabs.sendMessage(tab, {command:"apply"})     (compose.js)
+ *     → contact candidates + attachment rules        (contacts.js / attachments.js)
+ *     → one AI call (draft + thread context)         (ai.js / prompts.js)
+ *     → apply corrected text (single undoable transaction)
+ *     → merge deterministic To/Cc additions, attach matching files
  */
 "use strict";
 
-/* global MagicTrickAI, MagicTrickPrompts */
+/* global MagicTrickAI, MagicTrickPrompts, MagicTrickContacts, MagicTrickAttachments */
 
 const BUTTON_TITLE = "MagicTrick — fix this email with AI";
 
@@ -43,7 +44,17 @@ messenger.menus.create({
   contexts: ["compose_action"],
 });
 
+messenger.menus.create({
+  id: "magictrick-manage-attachments",
+  title: "MagicTrick: manage attachment rules…",
+  contexts: ["compose_action"],
+});
+
 messenger.menus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "magictrick-manage-attachments") {
+    messenger.runtime.openOptionsPage().catch(() => {});
+    return;
+  }
   if (info.menuItemId === "magictrick-with-prompt" && tab && tab.id != null) {
     // Ask the compose script to show the in-window prompt bar; it will call us
     // back with {type:"run-custom", prompt} when the user submits it.
@@ -99,27 +110,60 @@ async function runMagicTrick(tabId, opts) {
       return;
     }
 
-    const messages = buildMessages(mode, opts.prompt, draft, conversation);
-    const result = await MagicTrickAI.aiComplete(messages);
+    // Local context: contact candidates and registered attachment rules.
+    const candidates = await MagicTrickContacts.findContactCandidates(draft).catch(() => []);
+    const attachments = await MagicTrickAttachments.matchedAttachments(draft).catch(() => []);
 
-    const applied = await messenger.tabs.sendMessage(tabId, { command: "apply", text: result });
+    const messages = MagicTrickPrompts.buildMessages(mode, opts.prompt, draft, conversation);
+    const answer = await MagicTrickAI.aiComplete(messages);
+
+    const applied = await messenger.tabs.sendMessage(tabId, { command: "apply", text: answer });
     if (!applied || !applied.ok) {
       throw new Error((applied && applied.error) || "Could not update the compose window.");
     }
+
+    const summary = [mode === "reply" ? "✨ reply drafted" : "✨"];
+
+    // Recipients: deterministic local classification (greeted → To, other
+    // referenced candidates → Cc), merged into the existing fields without
+    // duplicates. setComposeDetails accepts plain email strings.
+    if (candidates.length) {
+      const wanted = MagicTrickPrompts.classifyRecipients(draft, candidates);
+      const details = await messenger.compose.getComposeDetails(tabId);
+      const current = {
+        to: (details.to || []).map(String),
+        cc: (details.cc || []).map(String),
+      };
+      const present = new Set(
+        [...current.to, ...current.cc].map((entry) => entry.toLowerCase())
+      );
+      const additions = {
+        to: wanted.to.filter((email) => !present.has(email.toLowerCase())),
+        cc: wanted.cc.filter((email) => !present.has(email.toLowerCase())),
+      };
+      if (additions.to.length || additions.cc.length) {
+        await messenger.compose.setComposeDetails(tabId, {
+          to: [...current.to, ...additions.to],
+          cc: [...current.cc, ...additions.cc],
+        });
+        if (additions.to.length) summary.push(`To: ${additions.to.join(", ")}`);
+        if (additions.cc.length) summary.push(`Cc: ${additions.cc.join(", ")}`);
+      }
+    }
+
+    // Attachments: every rule whose phrase appears in the draft.
+    for (const { name, file } of attachments) {
+      await messenger.compose.addAttachment(tabId, { file, name });
+      summary.push(`📎 ${name}`);
+    }
+
+    if (summary.length > 1) notify(summary.join("  ·  "));
   } catch (err) {
     notify(String(err.message || err).slice(0, 300));
   } finally {
     inFlight.delete(tabId);
     await setBusy(tabId, false);
   }
-}
-
-/**
- * Build the chat messages for the requested mode.
- * The thread is always passed as read-only context; only the draft is work material.
- */
-function buildMessages(mode, customPrompt, draftText, conversationText) {
-  return MagicTrickPrompts.buildMessages(mode, customPrompt, draftText, conversationText);
 }
 
 async function setBusy(tabId, busy) {

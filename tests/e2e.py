@@ -30,9 +30,23 @@ ADDON_ID = "magictrick@giuliocsr.github.io"
 # Snap Thunderbird cannot see /tmp — keep the profile inside its home area.
 PROFILE = Path.home() / "snap" / "thunderbird" / "common" / "magictrick-e2e-profile"
 THUNDERBIRD = os.environ.get("THUNDERBIRD_BIN", "thunderbird")
-MARIONETTE_PORT = 2828
+# Dedicated port: the user's real Thunderbird may run Marionette on the
+# default 2828 (tools/reinstall.py) — never collide with it.
+MARIONETTE_PORT = 2829
 
-EXTENSION_FILES = ["manifest.json", "ai.js", "prompts.js", "background.js", "compose.js", "icons"]
+EXTENSION_FILES = [
+    "manifest.json",
+    "ai.js",
+    "prompts.js",
+    "contacts.js",
+    "attachments.js",
+    "background.js",
+    "compose.js",
+    "options.html",
+    "options.js",
+    "options.css",
+    "icons",
+]
 
 PREFS = {
     "extensions.autoDisableScopes": 0,
@@ -60,6 +74,8 @@ PREFS = {
     # Never try to connect to the fake server (avoids password prompts).
     "mail.server.server2.login_at_startup": False,
     "mail.server.server2.check_new_mail": False,
+    # Bind THIS instance's Marionette to the dedicated harness port.
+    "marionette.port": 2829,
 }
 
 # The chrome-privileged Marionette sandbox already exposes Services as a global.
@@ -138,6 +154,16 @@ class Harness:
                     raise RuntimeError("Marionette never came up")
                 time.sleep(1)
         self.m.set_context(Marionette.CONTEXT_CHROME)
+        # Safety: prove we are talking to OUR throwaway instance, never the
+        # user's real Thunderbird.
+        profile_path = self.m.execute_script(
+            'return Services.dirsvc.get("ProfD", Ci.nsIFile).path;'
+        )
+        if profile_path != str(PROFILE):
+            self.m.delete_session()
+            raise RuntimeError(
+                f"Marionette belongs to the wrong profile ({profile_path}) — aborting"
+            )
         try:
             self.m._send_message("WebDriver:SetTimeouts", {"script": 240000})
         except Exception:
@@ -382,14 +408,81 @@ def test_auto_reply(h):
            f"{elapsed:.1f}s" if ok else f"{elapsed:.1f}s — html: " + after["html"][:400])
 
 
+RECIPIENT_DRAFT = (
+    "<p>Hello Pietro, how are you?</p>"
+    "<p>Giorgio has attached the correspondence. Attached, you can find my reference letters.</p>"
+)
+
+
+def seed_contacts(h):
+    """Two contacts in the Personal Address Book, via Thunderbird's own services."""
+    seeded = h.exec(
+        """const { MailServices } = ChromeUtils.importESModule(
+               "resource:///modules/MailServices.sys.mjs");
+           const book = MailServices.ab.getDirectory("jsaddrbook://abook.sqlite");
+           const add = (displayName, email) => {
+             if (book.getCardFromProperty("PrimaryEmail", email, false)) return;
+             const card = Cc["@mozilla.org/addressbook/cardproperty;1"]
+               .createInstance(Ci.nsIAbCard);
+             card.displayName = displayName;
+             card.setProperty("FirstName", displayName.split(" ")[0]);
+             card.setProperty("LastName", displayName.split(" ").slice(1).join(" "));
+             card.primaryEmail = email;
+             book.addCard(card);
+           };
+           add("Pietro Bianchi", "pietro.bianchi@example.com");
+           add("Giorgio Rossi", "giorgio.rossi@example.com");
+           return "seeded";"""
+    )
+    if seeded != "seeded":
+        raise RuntimeError(f"contact seeding failed: {seeded}")
+
+
+def test_recipient_assistant(h):
+    open_compose(h, RECIPIENT_DRAFT)
+    before = read_editor(h)
+    run_with_prompt(
+        h,
+        "Fix ONLY grammar, spelling and punctuation. Keep everything else "
+        "unchanged. Reply with the corrected draft text only.",
+    )
+    after, elapsed = wait_for_editor_change(h, before["html"])
+    # Recipients land just after the text — poll for them instead of guessing.
+    read_fields = """const cw = Services.wm.getMostRecentWindow("msgcompose");
+        const read = (rowId) => {
+          const row = cw.document.getElementById(rowId);
+          if (!row) return "";
+          return [...row.querySelectorAll("input")].map((i) => i.value.toLowerCase()).join(",");
+        };
+        return { to: read("addressRowTo"), cc: read("addressRowCc") };"""
+    deadline = time.time() + 6
+    fields = h.exec(read_fields)
+    while time.time() < deadline and not (fields["to"] or fields["cc"]):
+        time.sleep(0.5)
+        fields = h.exec(read_fields)
+    ok = (
+        elapsed < 5.0
+        and "pietro.bianchi@example.com" in fields["to"]
+        and "giorgio.rossi@example.com" in fields["cc"]
+    )
+    report(
+        "recipient assistant: Pietro → To, Giorgio → Cc from the address book",
+        ok,
+        f"{elapsed:.1f}s — to: {fields['to'] or '(none)'} · cc: {fields['cc'] or '(none)'}"
+        f" — text: {after['text'][:70]}",
+    )
+
+
 def main():
     if shutil.which(THUNDERBIRD) is None:
         sys.exit(f"Thunderbird binary not found: {THUNDERBIRD}")
     h = Harness()
     try:
         h.setup()
+        seed_contacts(h)  # before any run: the extension caches contacts
         test_fix_and_undo(h)
         test_auto_reply(h)
+        test_recipient_assistant(h)
     finally:
         h.teardown()
     passed = sum(results)

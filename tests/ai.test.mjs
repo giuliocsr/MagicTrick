@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { AI_ENDPOINTS, aiCleanOutput, aiComplete } = require("../ai.js");
-const { buildMessages } = require("../prompts.js");
+const { buildMessages, classifyRecipients } = require("../prompts.js");
 
 /* ------------------------------------------------------------------ */
 /* Prompt construction                                                 */
@@ -42,6 +42,36 @@ test("custom mode: user instruction replaces the system prompt", () => {
 test("empty conversation omits the thread section", () => {
   const messages = buildMessages("fix", "", "draft", "");
   assert.doesNotMatch(messages[1].content, /EMAIL THREAD/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Recipient assistance (deterministic, local)                          */
+/* ------------------------------------------------------------------ */
+
+test("classifyRecipients: greeted contact → To, other referenced → Cc", () => {
+  const candidates = [
+    { name: "Pietro Bianchi", email: "pietro.bianchi@example.com" },
+    { name: "Giorgio Rossi", email: "giorgio.rossi@example.com" },
+  ];
+  const draft =
+    "Hello Pietro, how are you? Giorgio has attached the correspondence. " +
+    "Attached, you can find my reference letters.";
+  assert.deepEqual(classifyRecipients(draft, candidates), {
+    to: ["pietro.bianchi@example.com"],
+    cc: ["giorgio.rossi@example.com"],
+  });
+});
+
+test("classifyRecipients: no greeting → everyone Cc", () => {
+  const candidates = [{ name: "Giorgio Rossi", email: "giorgio@example.com" }];
+  assert.deepEqual(classifyRecipients("Please thank Giorgio for the letter.", candidates), {
+    to: [],
+    cc: ["giorgio@example.com"],
+  });
+});
+
+test("classifyRecipients: empty candidates", () => {
+  assert.deepEqual(classifyRecipients("Hello Pietro", []), { to: [], cc: [] });
 });
 
 /* ------------------------------------------------------------------ */

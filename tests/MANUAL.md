@@ -49,6 +49,14 @@ Write an email to yourself; you never need to send it.
    Esc cancels, ✕ closes.
 8. **Failure path** — disconnect the network, click MagicTrick: after the
    timeouts you get a notification and the draft is unchanged.
+9. **Recipient assistant** — with a contact "Pietro Bianchi" (any real address
+   book entry), draft "Hello Pietro, how are you? Giorgio has attached the
+   correspondence." (Giorgio must also be a contact) and run MagicTrick:
+   Pietro appears in To, Giorgio in Cc, notification lists both.
+10. **Attachment rules** — right-click the button → "manage attachment
+    rules…" → register phrase "reference letters" with a small PDF. Draft
+    "Attached you can find my reference letters." and run MagicTrick:
+    the file is attached and listed in the notification.
 
 Report anything odd with: what you did, what you expected, what happened
 (the exact notification text if one appeared).
