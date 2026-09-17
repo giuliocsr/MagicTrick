@@ -35,7 +35,9 @@ from marionette_driver.marionette import Marionette
 
 ROOT = Path(__file__).resolve().parent.parent
 XPI = ROOT / "magictrick.xpi"
+DROPDOWN_XPI = ROOT / "dropdown" / "magictrick-dropdown.xpi"
 ADDON_ID = "magictrick@giuliocsr.github.io"
+DROPDOWN_ADDON_ID = "magictrick-menu@giuliocsr.github.io"
 PORT = 2828
 THUNDERBIRD = "thunderbird"
 PACKAGE_FILES = [
@@ -49,21 +51,36 @@ PACKAGE_FILES = [
     "options.html",
     "options.js",
     "options.css",
+    "prompt.html",
+    "prompt.js",
+    "prompt.css",
     "icons/wand-16.png",
     "icons/wand-32.png",
     "icons/wand-64.png",
 ]
 
+DROPDOWN_PACKAGE_FILES = [
+    "manifest.json",
+    "background.js",
+    "icons/wand-chevron-16.png",
+    "icons/wand-chevron-32.png",
+    "icons/wand-chevron-64.png",
+]
+
 
 def build_xpi():
-    missing = [name for name in PACKAGE_FILES if not (ROOT / name).is_file()]
-    if missing:
-        sys.exit(f"missing files, cannot package: {', '.join(missing)}")
-    XPI.unlink(missing_ok=True)
-    with zipfile.ZipFile(XPI, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name in PACKAGE_FILES:
-            zf.write(ROOT / name, name)
-    print(f"📦 built {XPI.name} ({XPI.stat().st_size} bytes)")
+    def build(target, base, names):
+        missing = [name for name in names if not (base / name).is_file()]
+        if missing:
+            sys.exit(f"missing files, cannot package {target}: {', '.join(missing)}")
+        target.unlink(missing_ok=True)
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in names:
+                zf.write(base / name, name)
+        print(f"📦 built {target} ({target.stat().st_size} bytes)")
+
+    build(XPI, ROOT, PACKAGE_FILES)
+    build(DROPDOWN_XPI, ROOT / "dropdown", DROPDOWN_PACKAGE_FILES)
 
 
 def thunderbird_pids():
@@ -132,12 +149,16 @@ def reinstall():
     m = connect()
     try:
         was_installed = False
-        try:
-            m._send_message("Addon:Uninstall", {"id": ADDON_ID})
-            was_installed = True
-        except Exception:
-            pass  # simply not installed yet
+        for addon_id in (ADDON_ID, DROPDOWN_ADDON_ID):
+            try:
+                m._send_message("Addon:Uninstall", {"id": addon_id})
+                was_installed = True
+            except Exception:
+                pass  # simply not installed yet
         m._send_message("Addon:Install", {"path": str(XPI), "temporary": False})
+        m._send_message(
+            "Addon:Install", {"path": str(DROPDOWN_XPI), "temporary": False}
+        )
 
         # Verify through the add-on manager when chrome scripting is allowed.
         try:

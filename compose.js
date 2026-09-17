@@ -8,7 +8,6 @@
  *     transaction — so one Ctrl+Z reverts the whole MagicTrick edit
  *     (plain-text answers become paragraphs; HTML answers keep the draft's
  *     formatting, sanitised to a safe tag whitelist)
- *   - shows the in-window input bar for custom prompts
  *
  * The script works in TWO injection contexts, depending on the Thunderbird
  * build: injected into the compose window (the classic compose_scripts path,
@@ -249,94 +248,6 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * Custom-prompt input bar (rendered inside the editor document,
-   * styled with system colours so it matches the Thunderbird UI)
-   * ------------------------------------------------------------------ */
-
-  const BAR_STYLE = `
-    #magictrick-bar {
-      position: fixed;
-      top: 6px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 2147483647;
-      display: flex;
-      gap: 4px;
-      padding: 4px;
-      background: -moz-Dialog;
-      color: -moz-DialogText;
-      border: 1px solid ThreeDShadow;
-      border-radius: 4px;
-      box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.25);
-      font: message-box;
-    }
-    #magictrick-bar input {
-      width: 34em;
-      max-width: 75vw;
-      padding: 3px 6px;
-      border: 1px solid ThreeDShadow;
-      background: Field;
-      color: FieldText;
-      font: message-box;
-    }
-    #magictrick-bar button {
-      font: message-box;
-      padding: 3px 12px;
-    }
-  `;
-
-  /**
-   * Show the prompt bar in the compose editor.
-   * @returns {Promise<string|null>} the prompt, or null when cancelled
-   */
-  function showPromptBar() {
-    return new Promise((resolve) => {
-      const doc = getEditorDoc();
-      if (!doc) {
-        resolve(null);
-        return;
-      }
-      doc.getElementById("magictrick-bar")?.remove();
-
-      if (!doc.getElementById("magictrick-style")) {
-        const style = doc.createElement("style");
-        style.id = "magictrick-style";
-        style.textContent = BAR_STYLE;
-        doc.documentElement.appendChild(style);
-      }
-
-      const bar = doc.createElement("div");
-      bar.id = "magictrick-bar";
-      bar.innerHTML =
-        '<input type="text" placeholder="Instruction for MagicTrick — Enter to run, Esc to cancel">' +
-        '<button class="mt-go">OK</button>';
-      doc.body.appendChild(bar);
-
-      const input = bar.querySelector("input");
-      let settled = false;
-      const close = (value) => {
-        if (settled) return;
-        settled = true;
-        bar.remove();
-        resolve(value);
-      };
-
-      bar.querySelector(".mt-go").addEventListener("click", () => close(input.value));
-      input.addEventListener("keydown", (event) => {
-        event.stopPropagation();
-        if (event.key === "Enter") close(input.value.trim() ? input.value : null);
-        if (event.key === "Escape") close(null);
-      });
-      // The bar lives inside the message being composed — the moment focus
-      // leaves it, remove it, so it can never leak into a sent email.
-      bar.addEventListener("focusout", (event) => {
-        if (!bar.contains(event.relatedTarget)) close(null);
-      });
-      input.focus();
-    });
-  }
-
-  /* ------------------------------------------------------------------ *
    * Message handling (talks to background.js)
    * ------------------------------------------------------------------ */
 
@@ -349,13 +260,6 @@
 
     if (msg.command === "apply") {
       return Promise.resolve(apply(String(msg.text || ""), { html: !!msg.html }));
-    }
-
-    if (msg.command === "customPrompt") {
-      showPromptBar().then((prompt) => {
-        if (prompt) api.runtime.sendMessage({ type: "run-custom", prompt });
-      });
-      return Promise.resolve({ shown: true });
     }
 
     return undefined;

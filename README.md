@@ -11,15 +11,17 @@ between you and regret.
 
 | Action | Result |
 |---|---|
-| Button → **✨ Polish this draft** (or <kbd>Ctrl+Shift+G</kbd>) | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. Formatted drafts (bullet lists, links, emphasis) travel as HTML and keep their formatting. |
-| **✨ Polish this draft** in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
-| Button → **MagicTrick with prompt…** | A minimal, system-styled input bar appears inside the composer — type any instruction ("make it more formal", "translate to German") and press <kbd>Enter</kbd>. |
-| Button → **Manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
+| Click the **wand** (or <kbd>Ctrl+Shift+G</kbd>) | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. Formatted drafts (bullet lists, links, emphasis) travel as HTML and keep their formatting. |
+| Click the wand in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
+| **▾ dropdown → MagicTrick with prompt…** | A small OS window titled "MagicTrick — your instruction" opens with the input focused: type any instruction ("make it more formal", "translate to German") and press <kbd>Enter</kbd>. |
+| **▾ dropdown → Manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
 | Mentions of your contacts | People whose names appear in the draft are added automatically — from your address books **and from your message history**: the person greeted goes to **To**, other referenced people to **Cc**. A notification always lists what was added. |
 
-Clicking the wand opens a native dropdown menu (like Thunderbird's attach
-button); the polish action is its first entry, and <kbd>Ctrl+Shift+G</kbd>
-runs it directly without opening the menu.
+The toolbar control is a **split button** like Thunderbird's own attach/save
+buttons: `[ 🪄 MagicTrick ][ ▾ ]` — the wand polishes in one click, the ▾
+opens the menu with the additional actions. Thunderbird allows each extension
+exactly one compose button, so the ▾ half ships as a tiny companion add-on
+(`dropdown/`, built and installed together with the main one).
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
 When you are replying, the quoted conversation is sent to the model **as read-only

@@ -1,12 +1,12 @@
 /**
  * MagicTrick — background orchestration.
  *
- * The compose button is a menu-typed action: clicking it opens the native
- * dropdown (like Thunderbird's attach button). The first entry runs the
- * polish pipeline; Ctrl+Shift+G runs it directly.
+ * The wand button polishes in one click. The [▾] split-button companion
+ * (dropdown/ add-on), the right-click menu and Ctrl+Shift+G offer the same
+ * plus the prompt window and the attachment-rules page.
  *
  * Flow of a run:
- *   menu "Polish this draft" / Ctrl+Shift+G / prompt bar submit
+ *   wand click / dropdown entry / Ctrl+Shift+G / prompt window submit
  *     → tabs.executeScript (idempotent compose.js injection)
  *     → tabs.sendMessage(tab, {command:"collect"})   (compose.js)
  *     → contact candidates + attachment rules        (contacts.js / attachments.js)
@@ -37,22 +37,27 @@ messenger.composeScripts
 // otherwise make the first click of a session unnecessarily slow.
 MagicTrickAI.aiComplete([{ role: "user", content: "ok" }]).catch(() => {});
 
-// The button's native dropdown (menu-typed compose action)…
+// The wand itself: one click = polish.
+messenger.composeAction.onClicked.addListener((tab) => {
+  if (tab && tab.id != null) runMagicTrick(tab.id, { mode: "auto" });
+});
+
+// Right-click menu on the wand (the ▾ dropdown lives in the companion add-on).
 messenger.menus.create({
   id: "magictrick-fix",
   title: "✨ Polish this draft",
-  contexts: ["compose_action_menu", "compose_action"],
+  contexts: ["compose_action"],
 });
-messenger.menus.create({ type: "separator", contexts: ["compose_action_menu", "compose_action"] });
+messenger.menus.create({ type: "separator", contexts: ["compose_action"] });
 messenger.menus.create({
   id: "magictrick-with-prompt",
   title: "MagicTrick with prompt…",
-  contexts: ["compose_action_menu", "compose_action"],
+  contexts: ["compose_action"],
 });
 messenger.menus.create({
   id: "magictrick-manage-attachments",
   title: "Manage attachment rules…",
-  contexts: ["compose_action_menu", "compose_action"],
+  contexts: ["compose_action"],
 });
 
 messenger.menus.onClicked.addListener((info, tab) => {
@@ -66,13 +71,47 @@ messenger.menus.onClicked.addListener((info, tab) => {
     return;
   }
   if (info.menuItemId === "magictrick-with-prompt") {
-    // Ask the compose script to show the in-window prompt bar; it will call us
-    // back with {type:"run-custom", prompt} when the user submits it.
-    ensureComposeScript(tab.id)
-      .then(() => messenger.tabs.sendMessage(tab.id, { command: "customPrompt" }))
-      .catch(() => notifyConnectionProblem());
+    promptTargetTabId = tab.id;
+    openPromptWindow();
   }
 });
+
+// Commands from the MagicTrick ▾ companion (the split-button dropdown).
+let promptTargetTabId = null;
+messenger.runtime.onMessageExternal?.addListener((msg, sender) => {
+  if (!msg || !msg.magictrickCommand) return undefined;
+  if (sender.id !== "magictrick-menu@giuliocsr.github.io") return undefined;
+  handleDropdownCommand(msg.magictrickCommand);
+});
+
+async function handleDropdownCommand(command) {
+  if (command === "rules") {
+    openRulesPage();
+    return;
+  }
+  const tabId = await findActiveComposeTab();
+  if (tabId == null) return;
+  if (command === "fix") {
+    runMagicTrick(tabId, { mode: "auto" });
+  } else if (command === "prompt") {
+    promptTargetTabId = tabId;
+    openPromptWindow();
+  }
+}
+
+/** The prompt window: a real OS popup with the page title, focused input. */
+async function openPromptWindow() {
+  try {
+    await messenger.windows.create({
+      url: "prompt.html",
+      type: "popup",
+      width: 560,
+      height: 150,
+    });
+  } catch {
+    notify("Could not open the prompt window.");
+  }
+}
 
 // Ctrl+Shift+G: run the polish pipeline on the active compose window.
 messenger.commands?.onCommand.addListener((command) => {
@@ -106,8 +145,19 @@ async function openRulesPage() {
 }
 
 messenger.runtime.onMessage.addListener((msg, sender) => {
-  if (msg && msg.type === "run-custom" && sender.tab && sender.tab.id != null) {
-    runMagicTrick(sender.tab.id, { mode: "custom", prompt: String(msg.prompt || "") });
+  if (msg && msg.type === "run-custom") {
+    // Messages from the prompt window must NOT be routed to the popup "tab"
+    // (Thunderbird may attach one as sender.tab) — use the compose window
+    // that asked for the prompt.
+    const fromPromptWindow = sender.url && String(sender.url).includes("prompt.html");
+    const tabId = fromPromptWindow
+      ? promptTargetTabId
+      : sender.tab && sender.tab.id != null
+        ? sender.tab.id
+        : promptTargetTabId;
+    if (tabId != null) {
+      runMagicTrick(tabId, { mode: "custom", prompt: String(msg.prompt || "") });
+    }
   }
 });
 

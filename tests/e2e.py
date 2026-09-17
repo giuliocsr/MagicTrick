@@ -45,8 +45,14 @@ EXTENSION_FILES = [
     "options.html",
     "options.js",
     "options.css",
+    "prompt.html",
+    "prompt.js",
+    "prompt.css",
     "icons",
 ]
+
+DROPDOWN_ADDON_ID = "magictrick-menu@giuliocsr.github.io"
+DROPDOWN_FILES = ["manifest.json", "background.js", "icons"]
 
 PREFS = {
     "extensions.autoDisableScopes": 0,
@@ -123,6 +129,17 @@ class Harness:
         for name in EXTENSION_FILES:
             src = ROOT / name
             dst = ext_dir / name
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+        # The [▾] split-button companion.
+        dropdown_dir = PROFILE / "extensions" / DROPDOWN_ADDON_ID
+        dropdown_dir.mkdir(parents=True)
+        for name in DROPDOWN_FILES:
+            src = ROOT / "dropdown" / name
+            dst = dropdown_dir / name
             if src.is_dir():
                 shutil.copytree(src, dst)
             else:
@@ -217,6 +234,9 @@ def json_str(value):
 
 
 def open_compose(h, body_html):
+    # One compose window at a time: the prompt window steals window recency,
+    # so "most recent compose window" must be unambiguous.
+    close_compose_windows(h)
     # NOTE: the window-opening chain must be awaited INSIDE the chrome script —
     # Marionette destroys the sandbox when the script returns, cancelling any
     # pending work it spawned.
@@ -253,31 +273,49 @@ def open_compose(h, body_html):
         diagnostics = found
     else:
         raise RuntimeError(f"compose window never appeared: {diagnostics}")
-    h.exec(
-        f"""{SERVICES}
-        const cw = Services.wm.getMostRecentWindow("msgcompose");
-        const doc = cw.document.getElementById("messageEditor").contentDocument;
-        // Insert through the editor's command system: assigning innerHTML
-        // behind its back races with editor init and gets wiped.
-        doc.defaultView.focus();
-        doc.execCommand("selectAll", false, null);
-        doc.execCommand("insertHTML", false, {json_str(body_html)});
-        return null;"""
-    )
-    time.sleep(1.5)  # let the compose script settle
+    # a chunk of the injected TEXT (tags never appear in textContent)
+    marker = __import__("re").sub(r"<[^>]+>", " ", body_html).strip()[:20]
+    injected = False
+    for attempt in range(4):
+        h.exec(
+            f"""{SERVICES}
+            const cw = Services.wm.getMostRecentWindow("msgcompose");
+            const doc = cw.document.getElementById("messageEditor").contentDocument;
+            // Insert through the editor's command system: assigning innerHTML
+            // behind its back races with editor init and gets wiped.
+            doc.defaultView.focus();
+            doc.execCommand("selectAll", false, null);
+            doc.execCommand("insertHTML", false, {json_str(body_html)});
+            return null;"""
+        )
+        time.sleep(0.6)
+        # Verify the draft actually took: an editor that is still initialising
+        # silently drops the insertion.
+        state = h.exec(
+            """const cw = Services.wm.getMostRecentWindow("msgcompose");
+               const doc = cw.document.getElementById("messageEditor").contentDocument;
+               return doc.body.textContent || "";"""
+        )
+        if marker[:12] in state:
+            injected = True
+            break
+    if not injected:
+        raise RuntimeError("draft injection did not take")
+    time.sleep(1.0)  # let the compose script settle
 
 
 def run_polish_via_button(h, timeout=90):
-    """Click the MagicTrick button (menu-typed) and run 'Polish this draft'.
+    """Click the [▾] companion button and run its 'Polish this draft' entry.
 
-    This is the exact path a user takes: the button's native dropdown opens
-    (menu-typed compose action) and its first entry fires the pipeline.
-    Returns the deadline timestamp for the change wait.
+    This exercises the real split-button path: the companion dropdown opens
+    (menu-typed compose actions are not trust-gated), its entry forwards the
+    command to the main extension across add-ons, and the polish runs.
     """
     opened = h.exec(
         """const cw = Services.wm.getMostRecentWindow("msgcompose");
-           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
-           if (!b) throw new Error("MagicTrick button not found");
+           const b = cw.document.getElementById(
+               "magictrick-menu_giuliocsr_github_io-composeAction-toolbarbutton");
+           if (!b) throw new Error("companion dropdown button not found");
            b.click();
            const deadline = Date.now() + 5000;
            return (async () => {
@@ -290,19 +328,19 @@ def run_polish_via_button(h, timeout=90):
            })();"""
     )
     if not opened:
-        raise RuntimeError("button dropdown did not open")
+        raise RuntimeError("companion dropdown did not open")
     clicked = h.exec(
         """const cw = Services.wm.getMostRecentWindow("msgcompose");
-           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           const b = cw.document.getElementById(
+               "magictrick-menu_giuliocsr_github_io-composeAction-toolbarbutton");
            const item = [...b.querySelectorAll("menuitem")]
                .find((mi) => (mi.label || "").includes("Polish this draft"));
-           if (!item) return { error: "menu item not found: " +
-               [...b.querySelectorAll("menuitem")].map((mi) => mi.label).join(",") };
+           if (!item) return { error: "menu item not found" };
            item.doCommand();
            return { ok: true };"""
     )
     if not (clicked and clicked.get("ok")):
-        raise RuntimeError(clicked and clicked.get("error", "menu activation failed"))
+        raise RuntimeError(clicked and clicked.get("error", "dropdown activation failed"))
     return time.time() + timeout
 
 
@@ -339,40 +377,74 @@ def activate_menu_item(h):
 
 
 def run_with_prompt(h, instruction, timeout=90):
-    """Activate via the menu, fill the prompt bar, press Enter, wait for the edit."""
+    """Open the prompt entry via the wand's context menu, then fill and submit
+    the OS prompt window. The window's page runs in a remote process, so a
+    chrome frame script (privileged, in-process) does the typing.
+    Returns the deadline for the change wait."""
     activate_menu_item(h)
+    window_found = False
     deadline = time.time() + 15
     while time.time() < deadline:
-        bar = h.exec(
-            """const cw = Services.wm.getMostRecentWindow("msgcompose");
-               const ed = cw.document.getElementById("messageEditor");
-               const doc = ed.contentDocument;
-               const bar = doc.getElementById("magictrick-bar");
-               return bar ? { input: !!bar.querySelector("input") } : null;"""
-        )
-        if bar and bar.get("input"):
-            break
         time.sleep(0.5)
-    else:
-        raise RuntimeError("prompt bar never appeared")
-    h.exec(
-        f"""const cw = Services.wm.getMostRecentWindow("msgcompose");
-            const doc = cw.document.getElementById("messageEditor").contentDocument;
-            const input = doc.getElementById("magictrick-bar").querySelector("input");
-            input.value = {json_str(instruction)};
-            input.dispatchEvent(new doc.defaultView.KeyboardEvent("keydown", {{
-                key: "Enter", bubbles: true, cancelable: true }}));
-            return null;"""
+        window_found = h.exec(
+            """for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {
+                 try {
+                   const b = w.document.getElementById("requestFrame");
+                   if (b && b.currentURI && b.currentURI.spec.includes("prompt.html")) return true;
+                 } catch (e) {}
+               }
+               return false;"""
+        )
+        if window_found:
+            break
+    if not window_found:
+        raise RuntimeError("prompt window never opened")
+
+    frame_script = (
+        "const doc = content.document;"
+        "const input = doc.getElementById('instruction');"
+        f"input.value = {json_str(instruction)};"
+        "doc.getElementById('prompt-form').dispatchEvent("
+        "  new doc.defaultView.Event('submit', {bubbles: true, cancelable: true}));"
     )
+    submitted = h.exec(
+        f"""for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {{
+               try {{
+                 const b = w.document.getElementById("requestFrame");
+                 if (!b || !b.currentURI.spec.includes("prompt.html")) continue;
+                 b.messageManager.loadFrameScript(
+                   "data:application/javascript;charset=utf-8,"
+                   + encodeURIComponent({json_str(frame_script)}), false);
+                 return true;
+               }} catch (e) {{}}
+             }}
+             return false;"""
+    )
+    if not submitted:
+        raise RuntimeError("could not reach the prompt window content")
     return time.time() + timeout
 
 
 def read_editor(h):
     return h.exec(
-        f"""{SERVICES}
-        const cw = Services.wm.getMostRecentWindow("msgcompose");
-        const doc = cw.document.getElementById("messageEditor").contentDocument;
-        return {{ html: doc.body.innerHTML, text: doc.body.textContent || "" }};"""
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const doc = cw.document.getElementById("messageEditor").contentDocument;
+           return { html: doc.body.innerHTML, text: doc.body.textContent || "" };"""
+    )
+
+
+def close_compose_windows(h):
+    h.exec(
+        """for (const cw of Services.wm.getEnumerator("msgcompose")) {
+             try {
+               cw.document.getElementById("messageEditor").contentDocument.body.innerHTML = "";
+               cw.close();
+             } catch (e) {}
+           }
+           for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {
+             try { w.close(); } catch (e) {}
+           }
+           return null;"""
     )
 
 

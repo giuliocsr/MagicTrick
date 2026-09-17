@@ -31,12 +31,13 @@ Removing later is one click in the Add-ons Manager; nothing is left behind.
 
 Write an email to yourself; you never need to send it.
 
-1. **Button dropdown** — clicking the wand opens a native dropdown (✨ Polish
-   this draft / MagicTrick with prompt… / Manage attachment rules…).
-2. **Grammar fix** — draft a few sentences with obvious errors, run "Polish
-   this draft" (or Ctrl+Shift+G): ✨ badge appears while working, corrected
-   text lands within seconds. The answer REPLACES the draft — it must never
-   be an annotation like "Incorrect spelling: … should be …".
+1. **Split button** — `[ 🪄 MagicTrick ][ ▾ ]`: one click on the wand
+   polishes; ▾ opens the menu (Polish / with prompt / Manage attachment
+   rules). Both add-ons must be installed.
+2. **Grammar fix** — draft a few sentences with obvious errors, click the
+   wand (or Ctrl+Shift+G): ✨ badge appears while working, corrected text
+   lands within seconds. The answer REPLACES the draft — it must never be an
+   annotation like "Incorrect spelling: … should be …".
 2b. **Formatting** — draft with a bullet list (and an error inside a bullet);
    after polishing the list must still be a list.
 3. **Ctrl+Z** — one press restores the exact previous draft.
