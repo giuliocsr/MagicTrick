@@ -1,12 +1,11 @@
 /**
  * MagicTrick — background orchestration.
  *
- * The wand button polishes in one click. The [▾] split-button companion
- * (dropdown/ add-on), the right-click menu and Ctrl+Shift+G offer the same
- * plus the prompt window and the attachment-rules page.
+ * The wand button polishes in one click; its right-click menu and
+ * Ctrl+Shift+G offer the prompt window and the attachment-rules page.
  *
  * Flow of a run:
- *   wand click / dropdown entry / Ctrl+Shift+G / prompt window submit
+ *   wand click / Ctrl+Shift+G / prompt window submit
  *     → tabs.executeScript (idempotent compose.js injection)
  *     → tabs.sendMessage(tab, {command:"collect"})   (compose.js)
  *     → contact candidates + attachment rules        (contacts.js / attachments.js)
@@ -42,14 +41,8 @@ messenger.composeAction.onClicked.addListener((tab) => {
   if (tab && tab.id != null) runMagicTrick(tab.id, { mode: "auto" });
 });
 
-// Right-click menu on the wand (power users; the ▾ dropdown lives in the
-// companion add-on and deliberately has no polish entry — the wand IS polish).
-messenger.menus.create({
-  id: "magictrick-fix",
-  title: "✨ Polish this draft",
-  contexts: ["compose_action"],
-});
-messenger.menus.create({ type: "separator", contexts: ["compose_action"] });
+// Right-click menu on the wand: only the secondary actions — the wand
+// itself is the polish.
 messenger.menus.create({
   id: "magictrick-with-prompt",
   title: "MagicTrick with prompt…",
@@ -63,10 +56,6 @@ messenger.menus.create({
 
 messenger.menus.onClicked.addListener((info, tab) => {
   if (!tab || tab.id == null) return;
-  if (info.menuItemId === "magictrick-fix") {
-    runMagicTrick(tab.id, { mode: "auto" });
-    return;
-  }
   if (info.menuItemId === "magictrick-manage-attachments") {
     openRulesPage();
     return;
@@ -77,28 +66,9 @@ messenger.menus.onClicked.addListener((info, tab) => {
   }
 });
 
-// Commands from the MagicTrick ▾ companion (the split-button dropdown).
+// The compose window the prompt window belongs to (the prompt window itself
+// has no meaningful tab to route back to).
 let promptTargetTabId = null;
-messenger.runtime.onMessageExternal?.addListener((msg, sender) => {
-  if (!msg || !msg.magictrickCommand) return undefined;
-  if (sender.id !== "magictrick-menu@giuliocsr.github.io") return undefined;
-  handleDropdownCommand(msg.magictrickCommand);
-});
-
-async function handleDropdownCommand(command) {
-  if (command === "rules") {
-    openRulesPage();
-    return;
-  }
-  const tabId = await findActiveComposeTab();
-  if (tabId == null) return;
-  if (command === "fix") {
-    runMagicTrick(tabId, { mode: "auto" });
-  } else if (command === "prompt") {
-    promptTargetTabId = tabId;
-    openPromptWindow();
-  }
-}
 
 /** The prompt window: a real OS popup with the page title, focused input. */
 async function openPromptWindow() {

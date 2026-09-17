@@ -51,8 +51,6 @@ EXTENSION_FILES = [
     "icons",
 ]
 
-DROPDOWN_ADDON_ID = "magictrick-menu@giuliocsr.github.io"
-DROPDOWN_FILES = ["manifest.json", "background.js", "icons"]
 
 PREFS = {
     "extensions.autoDisableScopes": 0,
@@ -129,17 +127,6 @@ class Harness:
         for name in EXTENSION_FILES:
             src = ROOT / name
             dst = ext_dir / name
-            if src.is_dir():
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy2(src, dst)
-
-        # The [▾] split-button companion.
-        dropdown_dir = PROFILE / "extensions" / DROPDOWN_ADDON_ID
-        dropdown_dir.mkdir(parents=True)
-        for name in DROPDOWN_FILES:
-            src = ROOT / "dropdown" / name
-            dst = dropdown_dir / name
             if src.is_dir():
                 shutil.copytree(src, dst)
             else:
@@ -304,35 +291,6 @@ def open_compose(h, body_html):
     time.sleep(1.0)  # let the compose script settle
 
 
-def run_polish_via_button(h, timeout=90):
-    """Run the polish pipeline through the wand's 'Polish this draft' menu
-    entry (synthetic clicks on plain action buttons are trust-rejected, but
-    context-menu items are not). Same pipeline as a real wand click."""
-    h.exec(
-        """const cw = Services.wm.getMostRecentWindow("msgcompose");
-           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
-           if (!b) throw new Error("MagicTrick button not found");
-           const rect = b.getBoundingClientRect();
-           b.dispatchEvent(new cw.MouseEvent("contextmenu", {
-               bubbles: true, cancelable: true, view: cw, button: 2,
-               clientX: rect.x + 5, clientY: rect.y + 5 }));
-           return null;"""
-    )
-    clicked = h.exec(
-        """const cw = Services.wm.getMostRecentWindow("msgcompose");
-           const item = [...cw.document.querySelectorAll("menuitem")]
-               .find((mi) => (mi.label || "").includes("Polish this draft"));
-           if (!item) return { error: "menu item not found" };
-           item.doCommand();
-           const popup = item.closest("menupopup");
-           if (popup && typeof popup.hidePopup === "function") popup.hidePopup();
-           return { ok: true };"""
-    )
-    if not (clicked and clicked.get("ok")):
-        raise RuntimeError(clicked and clicked.get("error", "polish menu activation failed"))
-    return time.time() + timeout
-
-
 def activate_menu_item(h):
     """Right-click the MagicTrick button and run the 'with prompt' menu item.
 
@@ -459,7 +417,7 @@ FIX_INSTRUCTION = (
 def test_fix_and_undo(h):
     open_compose(h, BAD_DRAFT)
     before = read_editor(h)
-    deadline = run_polish_via_button(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
     after, elapsed = wait_for_editor_change(h, before["html"])
 
     text = after["text"]
@@ -619,7 +577,7 @@ def seed_history_message(h):
 def test_format_preserved(h):
     open_compose(h, FORMAT_DRAFT)
     before = read_editor(h)
-    run_polish_via_button(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
     after, elapsed = wait_for_editor_change(h, before["html"])
     text = after["text"]
     html = after["html"]
@@ -647,7 +605,7 @@ HISTORY_DRAFT = (
 def test_recipient_from_history(h):
     open_compose(h, HISTORY_DRAFT)
     before = read_editor(h)
-    run_polish_via_button(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
     wait_for_editor_change(h, before["html"])
     read_fields = """const cw = Services.wm.getMostRecentWindow("msgcompose");
         const read = (rowId) => {

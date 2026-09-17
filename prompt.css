@@ -9,26 +9,40 @@ body {
 }
 
 body {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
+  justify-content: stretch;
   background: -moz-Dialog;
   color: -moz-DialogText;
   padding: 8px;
+  margin: 0;
+  width: 100vw;
 }
 
 form {
+  box-sizing: border-box;
   display: flex;
   gap: 6px;
   width: 100%;
 }
 
 input {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 12em;
+  width: 100%;
   padding: 4px 8px;
   border: 1px solid ThreeDShadow;
   background: Field;
   color: FieldText;
   font: message-box;
+}
+
+@media (max-width: 380px) {
+  /* Very narrow windows: stack the OK button under the input. */
+  form {
+    flex-direction: column;
+  }
 }
 
 button {

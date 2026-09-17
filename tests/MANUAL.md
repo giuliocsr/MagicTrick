@@ -31,10 +31,8 @@ Removing later is one click in the Add-ons Manager; nothing is left behind.
 
 Write an email to yourself; you never need to send it.
 
-1. **Split pair** — `[ 🪄 MagicTrick ][ ▾ ]`: one click on the wand
-   polishes; ▾ opens the menu (with prompt / Manage attachment rules — no
-   polish entry, the wand already does that). Both add-ons must be
-   installed. Right-clicking the wand also offers all three.
+1. **Button** — one click on the wand polishes; right-click offers exactly
+   two entries (MagicTrick with prompt… / Manage attachment rules…).
 2. **Grammar fix** — draft a few sentences with obvious errors, click the
    wand (or Ctrl+Shift+G): ✨ badge appears while working, corrected text
    lands within seconds. The answer REPLACES the draft — it must never be an

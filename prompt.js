@@ -12,6 +12,24 @@ window.focus();
 input.focus();
 input.select();
 
+// Resize the OS window to exactly fit the content (input + OK button).
+// outerHeight − innerHeight is the window chrome (title bar); the width is
+// content-driven but capped so it stays pleasant on large monitors.
+(async () => {
+  try {
+    const content = document.documentElement;
+    const chromeHeight = window.outerHeight - window.innerHeight;
+    const chromeWidth = window.outerWidth - window.innerWidth;
+    const width = Math.max(320, Math.min(720, content.scrollWidth + chromeWidth + 2));
+    const height = content.scrollHeight + chromeHeight + 2;
+    const current = await messenger.windows.getCurrent();
+    await messenger.windows.update(current.id, { width, height });
+    input.focus(); // resizing can steal focus — give it back
+  } catch {
+    // Cosmetic only; the window simply keeps its default size.
+  }
+})();
+
 document.getElementById("prompt-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const value = input.value.trim();

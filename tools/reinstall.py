@@ -35,9 +35,7 @@ from marionette_driver.marionette import Marionette
 
 ROOT = Path(__file__).resolve().parent.parent
 XPI = ROOT / "magictrick.xpi"
-DROPDOWN_XPI = ROOT / "dropdown" / "magictrick-dropdown.xpi"
 ADDON_ID = "magictrick@giuliocsr.github.io"
-DROPDOWN_ADDON_ID = "magictrick-menu@giuliocsr.github.io"
 PORT = 2828
 THUNDERBIRD = "thunderbird"
 PACKAGE_FILES = [
@@ -59,14 +57,6 @@ PACKAGE_FILES = [
     "icons/wand-64.png",
 ]
 
-DROPDOWN_PACKAGE_FILES = [
-    "manifest.json",
-    "background.js",
-    "icons/wand-chevron-16.png",
-    "icons/wand-chevron-32.png",
-    "icons/wand-chevron-64.png",
-]
-
 
 def build_xpi():
     def build(target, base, names):
@@ -80,7 +70,6 @@ def build_xpi():
         print(f"📦 built {target} ({target.stat().st_size} bytes)")
 
     build(XPI, ROOT, PACKAGE_FILES)
-    build(DROPDOWN_XPI, ROOT / "dropdown", DROPDOWN_PACKAGE_FILES)
 
 
 def thunderbird_pids():
@@ -149,16 +138,19 @@ def reinstall():
     m = connect()
     try:
         was_installed = False
-        for addon_id in (ADDON_ID, DROPDOWN_ADDON_ID):
-            try:
-                m._send_message("Addon:Uninstall", {"id": addon_id})
-                was_installed = True
-            except Exception:
-                pass  # simply not installed yet
+        try:
+            m._send_message("Addon:Uninstall", {"id": ADDON_ID})
+            was_installed = True
+        except Exception:
+            pass  # simply not installed yet
+        # Remove the retired dropdown companion if present.
+        try:
+            m._send_message(
+                "Addon:Uninstall", {"id": "magictrick-menu@giuliocsr.github.io"}
+            )
+        except Exception:
+            pass
         m._send_message("Addon:Install", {"path": str(XPI), "temporary": False})
-        m._send_message(
-            "Addon:Install", {"path": str(DROPDOWN_XPI), "temporary": False}
-        )
 
         # Verify through the add-on manager when chrome scripting is allowed.
         try:
