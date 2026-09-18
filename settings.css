@@ -1,5 +1,6 @@
+/* Always light, regardless of the OS theme. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font: 14px/1.5 sans-serif;
 }
 
@@ -7,19 +8,35 @@ body {
   display: flex;
   margin: 0;
   min-height: 100vh;
-  background: -moz-Dialog;
-  color: -moz-DialogText;
+  background: #ffffff;
+  color: #1c1622;
 }
 
 /* ── Section menu ─────────────────────────────────────────────────── */
 #section-menu {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 2px;
-  padding: 12px 8px;
-  background: rgba(128, 100, 190, 0.08);
-  border-right: 1px solid ThreeDShadow;
-  min-width: 200px;
+  padding: 16px 10px;
+  background: #f4f1fa;
+  border-right: 1px solid #d8d0e8;
+  min-width: 210px;
+}
+
+#logo {
+  width: 44px;
+  height: 44px;
+  align-self: center;
+  margin-bottom: 4px;
+}
+
+#logo-text {
+  text-align: center;
+  font-weight: bold;
+  font-size: 15px;
+  margin-bottom: 14px;
+  color: #4a3a68;
 }
 
 #section-menu .section {
@@ -34,11 +51,11 @@ body {
 }
 
 #section-menu .section:hover {
-  background: rgba(128, 100, 190, 0.15);
+  background: #e6def6;
 }
 
 #section-menu .section.active {
-  background: rgba(128, 100, 190, 0.28);
+  background: #d4c5f2;
   font-weight: bold;
 }
 
@@ -74,10 +91,10 @@ code {
 #add-form input[type="text"] {
   grid-column: 1 / -1;
   padding: 0.5rem 0.6rem;
-  border: 1px solid ThreeDShadow;
+  border: 1px solid #c9c2d8;
   border-radius: 6px;
-  background: Field;
-  color: FieldText;
+  background: #ffffff;
+  color: #1c1622;
 }
 
 #add-form button {
@@ -109,7 +126,7 @@ th,
 td {
   text-align: left;
   padding: 0.45rem 0.6rem;
-  border-bottom: 1px solid rgba(128, 100, 190, 0.25);
+  border-bottom: 1px solid #e4def2;
 }
 
 tr.empty td {
@@ -122,7 +139,7 @@ td button {
   border-radius: 6px;
   padding: 0.3rem 0.7rem;
   cursor: pointer;
-  background: rgba(200, 60, 60, 0.15);
+  background: #f6dede;
   color: inherit;
 }
 
@@ -132,10 +149,10 @@ td button {
   width: 100%;
   margin: 1rem 0;
   padding: 8px;
-  border: 1px solid ThreeDShadow;
+  border: 1px solid #c9c2d8;
   border-radius: 6px;
-  background: Field;
-  color: FieldText;
+  background: #ffffff;
+  color: #1c1622;
   font: message-box;
 }
 
@@ -153,13 +170,8 @@ td button {
 .prompt-actions button.link {
   border: none;
   background: none;
-  color: -moz-NativeHyperlinkText;
+  color: #5b3fa8;
   text-decoration: underline;
   padding: 4px 2px;
 }
 
-@media (prefers-color-scheme: dark) {
-  #add-form button {
-    background: #6d4bb0;
-  }
-}

@@ -16,6 +16,13 @@ body {
   width: 100vw;
 }
 
+/* The window's content fills it in BOTH axes: the textarea flexes with the
+   window height, the buttons always sit underneath at full width. */
+html,
+body > form {
+  height: 100%;
+}
+
 form {
   box-sizing: border-box;
   display: flex;
@@ -27,12 +34,13 @@ form {
 textarea {
   box-sizing: border-box;
   width: 100%;
-  min-height: 7em;
+  flex: 1 1 auto;
+  min-height: 14em;
   resize: none;
-  padding: 6px 8px;
-  border: 1px solid ThreeDShadow;
-  background: Field;
-  color: FieldText;
+  padding: 8px;
+  border: 1px solid #c9c2d8;
+  background: #ffffff;
+  color: #1c1622;
   font: message-box;
 }
 
@@ -40,8 +48,12 @@ textarea {
   display: flex;
   gap: 8px;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.actions button {
+  flex: 1 1 auto;
 }
 
 button {
@@ -57,9 +69,3 @@ button.link {
   padding: 4px 2px;
 }
 
-@media (max-width: 420px) {
-  .actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-}

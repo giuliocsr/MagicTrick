@@ -28,21 +28,32 @@ const AI_ENDPOINTS = [
     // allows only ONE concurrent request per anonymous client.
     headers: { Authorization: "Bearer unused" },
     model: "mistral-Nemo-Instruct-2407",
+    cooldownMs: 10000,
   },
   {
     name: "Pollinations (openai-fast)",
     url: "https://text.pollinations.ai/openai",
     model: "openai-fast",
+    cooldownMs: 4000,
   },
   {
     name: "Pollinations",
     url: "https://text.pollinations.ai/openai",
     model: "openai",
+    cooldownMs: 4000,
   },
 ];
 
 const AI_REQUEST_TIMEOUT_MS = 8000;
 const AI_MAX_OUTPUT_TOKENS = 2048;
+
+/** Throttled lanes sit out briefly instead of burning race slots.
+ * LLM7: one anonymous request per ~10 s; Pollinations: burst limits. */
+const laneCooldowns = new Map(); // endpoint name → timestamp until
+const HEDGE_DELAY_MS = 1500;
+/** The lane that won the previous run leads the next one alone — halves the
+ * request volume per run and keeps both providers out of their burst limits. */
+let lastWinner = null;
 
 /**
  * Run one request against one endpoint.
@@ -99,20 +110,27 @@ async function aiComplete(messages) {
   try {
     return await aiCompleteOnce(messages);
   } catch (err) {
-    const fastFailure = Date.now() - started < 2500;
-    if (!fastFailure) throw err;
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    const elapsed = Date.now() - started;
+    logLane("chain", "failed", elapsed, err.message || err);
+    // One retry whenever the chain failed quickly enough that the user is
+    // still waiting anyway — the anonymous endpoints' throttles and network
+    // blips usually clear within a second.
+    if (elapsed >= 12000) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 700));
     return aiCompleteOnce(messages);
   }
 }
 
 function aiCompleteOnce(messages) {
   const FAST_LANES = 2; // endpoints raced in parallel at t=0
+  const BACKSTOP = AI_ENDPOINTS.length - 1;
   const controllers = [];
   const started = new Set();
   const failed = new Set();
+  const skipped = new Set(); // fast lanes held back by a throttle cooldown
   const errors = [];
   let settled = false;
+  let backstopLaunched = false;
 
   return new Promise((resolve, reject) => {
     const finish = (fn, arg) => {
@@ -124,7 +142,29 @@ function aiCompleteOnce(messages) {
       fn(arg);
     };
 
-    const run = (index) => {
+    function maybeAdvance() {
+      const fastDone = () => {
+        for (let i = 0; i < FAST_LANES; i++) {
+          if (!failed.has(i) && !skipped.has(i)) return false;
+        }
+        return true;
+      };
+      if (fastDone() && !backstopLaunched) {
+        backstopLaunched = true;
+        run(BACKSTOP);
+      }
+      // Reject only when EVERY endpoint is resolved (failed or cooling-skipped)
+      // — a hedge lane or backstop that has not run yet must not be cut off.
+      let allResolved = true;
+      for (let i = 0; i < AI_ENDPOINTS.length; i++) {
+        if (!failed.has(i) && !skipped.has(i)) allResolved = false;
+      }
+      if (allResolved) {
+        finish(reject, new Error(`All AI endpoints failed (${errors.join(" · ")})`));
+      }
+    }
+
+    function run(index) {
       if (settled || index >= AI_ENDPOINTS.length || started.has(index)) return;
       started.add(index);
       const endpoint = AI_ENDPOINTS[index];
@@ -134,29 +174,101 @@ function aiCompleteOnce(messages) {
       const timer = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
       timer.unref?.();
 
+      const laneStarted = Date.now();
       aiCallEndpoint(endpoint, messages, controller.signal).then(
-        (content) => finish(resolve, content),
+        (content) => {
+          lastWinner = endpoint.name;
+          logLane(endpoint.name, "ok", Date.now() - laneStarted, "");
+          finish(resolve, content);
+        },
         (err) => {
           clearTimeout(timer);
+          const aborted = controller.signal.aborted;
+          logLane(
+            endpoint.name,
+            aborted ? (settled ? "lost-race" : "timeout") : "fail",
+            Date.now() - laneStarted,
+            String(err.message || err)
+          );
+          if (/HTTP 429/.test(String(err.message || ""))) {
+            laneCooldowns.set(
+              endpoint.name,
+              Date.now() + (endpoint.cooldownMs || 6000)
+            );
+          }
           if (settled) return;
           failed.add(index);
           errors.push(`${endpoint.name}: ${err.message || err}`);
-          // Backstop: only once every fast lane has failed.
-          let fastAllFailed = true;
-          for (let i = 0; i < FAST_LANES; i++) fastAllFailed = fastAllFailed && failed.has(i);
-          if (fastAllFailed) run(AI_ENDPOINTS.length - 1);
-          if (started.size === AI_ENDPOINTS.length && failed.size === AI_ENDPOINTS.length) {
-            finish(reject, new Error(`All AI endpoints failed (${errors.join(" · ")})`));
-          }
+          maybeAdvance();
         }
       );
-    };
+    }
 
-    for (let i = 0; i < FAST_LANES; i++) run(i);
+    // Winner-first: the lane that won the previous run leads alone and the
+    // other fast lane joins only as a late hedge. Endpoints currently
+    // throttling us sit the round out (unless every fast lane is cooling).
+    const cooling = (index) =>
+      (laneCooldowns.get(AI_ENDPOINTS[index].name) || 0) > Date.now();
+
+    const winnerIndex = AI_ENDPOINTS.findIndex((e) => e.name === lastWinner);
+    if (
+      lastWinner &&
+      winnerIndex !== -1 &&
+      winnerIndex < FAST_LANES &&
+      !cooling(winnerIndex)
+    ) {
+      run(winnerIndex);
+      const other = 1 - winnerIndex;
+      if (!cooling(other)) {
+        setTimeout(() => run(other), HEDGE_DELAY_MS);
+      } else {
+        skipped.add(other);
+        logLane(AI_ENDPOINTS[other].name, "cooldown", 0, "");
+      }
+    } else {
+      let startedFast = 0;
+      for (let i = 0; i < FAST_LANES; i++) {
+        if (cooling(i)) {
+          skipped.add(i);
+          logLane(AI_ENDPOINTS[i].name, "cooldown", 0, "");
+        } else {
+          run(i);
+          startedFast++;
+        }
+      }
+      if (startedFast === 0) {
+        for (let i = 0; i < FAST_LANES; i++) {
+          skipped.delete(i);
+          run(i);
+        }
+      }
+    }
+    maybeAdvance();
   });
 }
 
-globalThis.MagicTrickAI = { aiComplete };
+globalThis.__mtChainLog = [];
+
+function logLane(endpoint, status, ms, error) {
+  try {
+    globalThis.__mtChainLog.push({
+      at: new Date().toISOString(),
+      lane: endpoint,
+      status,
+      ms,
+      error: error.slice(0, 200),
+    });
+    if (globalThis.__mtChainLog.length > 60) globalThis.__mtChainLog.shift();
+    messenger?.storage?.local?.set({ chainLog: globalThis.__mtChainLog.slice(-25) });
+  } catch {
+    // Node (unit tests) has no messenger.
+  }
+}
+
+globalThis.MagicTrickAI = {
+  aiComplete,
+  chainLog: globalThis.__mtChainLog,
+};
 
 // Node (unit tests) loads this file via require().
 if (typeof module !== "undefined" && module.exports) {

@@ -21,6 +21,24 @@
 
 const BUTTON_TITLE = "MagicTrick — fix this email with AI";
 
+/** Run-lifecycle log (Settings → Diagnostics), same shape as the lane log. */
+async function mtLog(lane, status, ms, error) {
+  try {
+    const { chainLog } = await messenger.storage.local.get("chainLog");
+    const log = chainLog || [];
+    log.push({
+      at: new Date().toISOString(),
+      lane,
+      status,
+      ms: ms || 0,
+      error: String(error || "").slice(0, 200),
+    });
+    await messenger.storage.local.set({ chainLog: log.slice(-25) });
+  } catch {
+    // Never let logging break a run.
+  }
+}
+
 /** The persisted standard instruction ("Apply for all future emails"). */
 let savedInstruction = null;
 messenger.storage.local
@@ -139,6 +157,9 @@ async function openSettingsPage() {
 }
 
 messenger.runtime.onMessage.addListener((msg, sender) => {
+  if (msg && msg.type === "get-log") {
+    return Promise.resolve({ log: (MagicTrickAI.chainLog || []).slice(-10) });
+  }
   if (msg && msg.type === "get-standard") {
     return Promise.resolve({
       instruction: savedInstruction || MagicTrickPrompts.builtInInstruction(),
@@ -204,8 +225,13 @@ async function ensureComposeScript(tabId) {
  * @param {{mode: "auto"|"custom", prompt?: string}} opts
  */
 async function runMagicTrick(tabId, opts) {
-  if (inFlight.has(tabId)) return;
+  const runStarted = Date.now();
+  if (inFlight.has(tabId)) {
+    mtLog("run", "skipped-duplicate", 0, "");
+    return;
+  }
   inFlight.add(tabId);
+  mtLog("run", "start", 0, opts.mode);
   await setBusy(tabId, true);
   try {
     await ensureComposeScript(tabId);
@@ -224,6 +250,8 @@ async function runMagicTrick(tabId, opts) {
     const conversation = extract ? extract.conversationText : "";
     const draftHtml = extract ? extract.draftHtml || "" : "";
 
+    mtLog("run", "collected", Date.now() - runStarted,
+      `draft=${draft.length} conv=${conversation.length} html=${draftHtml.length}`);
     const mode = opts.mode === "custom" ? "custom" : !draft.trim() ? "reply" : "fix";
     if (mode === "reply" && !conversation.trim()) {
       notify("Nothing to do: the draft is empty and there is no conversation to reply to.");
@@ -246,7 +274,9 @@ async function runMagicTrick(tabId, opts) {
       sender,
       savedInstruction
     );
+    const chainStarted = Date.now();
     const answer = MagicTrickPrompts.stripAnswerPreamble(await MagicTrickAI.aiComplete(messages));
+    mtLog("run", "chain-ok", Date.now() - chainStarted, `answer=${answer.length}`);
 
     // A refusal is not a draft: show what the AI said instead of replacing
     // the user's text with it. Never applied in fix mode — there a "sorry,
@@ -271,6 +301,8 @@ async function runMagicTrick(tabId, opts) {
     if (!applied || !applied.ok) {
       throw new Error((applied && applied.error) || "Could not update the compose window.");
     }
+    mtLog("run", "applied", Date.now() - runStarted,
+      `html=${applyMsg.html ? 1 : 0} answerHead=${answer.slice(0, 60)}`);
 
     const summary = [mode === "reply" ? "✨ reply drafted" : "✨"];
 
@@ -310,6 +342,7 @@ async function runMagicTrick(tabId, opts) {
     if (summary.length > 1) notify(summary.join("  ·  "));
   } catch (err) {
     console.error("[MagicTrick] run failed:", err);
+    mtLog("run", "error", Date.now() - runStarted, err.message || err);
     notify(String(err.message || err).slice(0, 300));
   } finally {
     inFlight.delete(tabId);

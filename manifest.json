@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "MagicTrick",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "One-click AI email polishing for Thunderbird: grammar fix, reply drafting, recipient assistance and attachment rules. Free, keyless, no setup.",
   "browser_specific_settings": {
     "gecko": {

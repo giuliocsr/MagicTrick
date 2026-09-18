@@ -14,7 +14,7 @@ between you and regret.
 | Click the **wand** (or <kbd>Ctrl+Shift+G</kbd>) | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. Formatted drafts (bullet lists, links, emphasis) travel as HTML and keep their formatting. |
 | Click the wand in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below, signed off with your sender **first name** ("Best regards, Giulio") inferred from the sending address. |
 | Right-click → **MagicTrick with prompt…** | A small OS window titled "MagicTrick — your instruction" opens, auto-sized to its content, pre-filled with the active standard instruction, input focused. **Apply this time** runs it once; **Apply for all future emails** also saves it as the new standard — used for both the polish and the auto-reply, with the thread/sender/format context still appended automatically. A "Restore built-in" link reverts. |
-| Right-click → **Settings** | Opens a focused Thunderbird tab with two sections: **Registered files rules** (register files you routinely send — "reference letters" → `reference-letters.pdf`, auto-attached whenever the phrase appears in a draft) and **Standard prompt** (view, save or restore the instruction sent to the AI). |
+| Right-click → **Settings** | Opens a focused Thunderbird tab (light theme, wand logo) with three sections: **Registered files rules** (register files you routinely send — "reference letters" → `reference-letters.pdf`, auto-attached whenever the phrase appears in a draft; they survive restarts), **Standard prompt** (view, save or restore the instruction sent to the AI) and **Diagnostics** (the last AI-chain events). |
 | Mentions of your contacts | People whose names appear in the draft are added automatically — from your address books **and from your message history**: the person greeted goes to **To**, other referenced people to **Cc**. A notification always lists what was added. |
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
@@ -65,8 +65,12 @@ draft region replaced ◀───────────  corrected text
   first click of a session is fast too.
 - Reasoning-heavy free models are deliberately avoided: they can think for 10-30 s
   before answering. If you swap endpoints in `ai.js`, keep replacements fast.
-- A chain that fails fast (throttle class) is retried once automatically before
-  the error surfaces; a second manual click also recovers instantly.
+- Request pacing keeps the anonymous tiers happy: the endpoint that won the
+  previous run leads alone (the other joins only as a late hedge), endpoints
+  answering 429 sit out a short cooldown, and any chain failure under 12 s is
+  retried once automatically.
+- **Settings → Diagnostics** shows the last chain events (which endpoint, ok /
+  429 / timeout / network error, latency) — paste those into a bug report.
 - There is deliberately **no startup warm-up request**: the background page sleeps
   when idle and every wake would re-run one, racing your first click into the
   endpoints' anonymous concurrency limits. Failures are logged to Thunderbird's
@@ -89,8 +93,10 @@ draft region replaced ◀───────────  corrected text
    ```
 3. In Thunderbird: **Tools → Add-ons and Themes → ⚙ → Install Add-on From File…**
    → select `magictrick.xpi`.
-4. Removal is the usual one click in the Add-ons Manager. Aside from attachment-rule
-   files you registered yourself, nothing is left behind.
+4. Removal is the usual one click in the Add-ons Manager. Registered
+   attachment-rule files persist across Thunderbird restarts and add-on
+   updates; uninstalling the add-on removes them (that is Thunderbird
+   deleting the extension's storage, not a MagicTrick setting).
 
 ### For development
 

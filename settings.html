@@ -7,8 +7,11 @@
 </head>
 <body>
   <nav id="section-menu">
+    <img id="logo" src="icons/wand.svg" alt="MagicTrick" />
+    <div id="logo-text">MagicTrick</div>
     <button class="section active" data-section="rules">Registered files rules</button>
     <button class="section" data-section="prompt">Standard prompt</button>
+    <button class="section" data-section="diagnostics">Diagnostics</button>
   </nav>
 
   <main>
@@ -59,8 +62,16 @@
         <span id="prompt-status" role="status"></span>
       </div>
     </section>
-  </main>
 
+    <section id="diagnostics" class="panel" hidden>
+      <p class="hint">
+        The last AI-chain failures of this session (what the notification
+        summarises), with elapsed time and prompt size — paste these into a
+        bug report.
+      </p>
+      <ul id="diag-list"><li>(no failures this session — the chain is healthy)</li></ul>
+    </section>
+  </main>
   <script src="attachments.js"></script>
   <script src="settings.js"></script>
 </body>

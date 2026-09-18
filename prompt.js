@@ -35,8 +35,8 @@ messenger.runtime
     const content = document.documentElement;
     const chromeHeight = window.outerHeight - window.innerHeight;
     const chromeWidth = window.outerWidth - window.innerWidth;
-    const width = Math.max(360, Math.min(760, content.scrollWidth + chromeWidth + 2));
-    const height = content.scrollHeight + chromeHeight + 2;
+    const width = Math.max(480, Math.min(760, content.scrollWidth + chromeWidth + 2));
+    const height = Math.max(320, content.scrollHeight + chromeHeight + 2);
     const current = await messenger.windows.getCurrent();
     await messenger.windows.update(current.id, { width, height });
     textarea.focus(); // resizing can steal focus — give it back

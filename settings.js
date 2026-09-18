@@ -112,3 +112,36 @@ restoreButton.addEventListener("click", async () => {
 });
 
 refreshPrompt();
+
+
+/* ── Diagnostics ──────────────────────────────────────────────────── */
+(async () => {
+  const list = document.querySelector("#diag-list");
+  const data = await messenger.storage.local.get("chainLog").catch(() => null);
+  const entries = (data && data.chainLog) || [];
+  if (!entries.length) return;
+  list.textContent = "";
+  for (const entry of entries.slice().reverse()) {
+    const item = document.createElement("li");
+    item.textContent =
+      `${entry.at} — ${entry.lane} — ${entry.status} (${entry.ms} ms)` +
+      (entry.error ? ` — ${entry.error}` : "");
+    list.appendChild(item);
+  }
+})();
+
+/* ── Test/diagnostics hook ──────────────────────────────────────────
+ * Runs entirely in the page compartment so automated tests (and curious
+ * users) can drive the rules store without chrome waiver problems. */
+window.__mt = {
+  async registerProbeRule() {
+    const file = new File(["probe content"], "persistence-probe.txt", {
+      type: "text/plain",
+    });
+    await MagicTrickAttachments.addAttachmentRule(["persistence probe"], file);
+    return (await MagicTrickAttachments.listAttachmentRules()).length;
+  },
+  async countRules() {
+    return (await MagicTrickAttachments.listAttachmentRules()).length;
+  },
+};

@@ -200,6 +200,45 @@ class Harness:
                 self.tb.kill()
         shutil.rmtree(PROFILE, ignore_errors=True)
 
+    def restart(self):
+        """Close and relaunch Thunderbird on the SAME profile (persistence
+        checks). The extension and all stored data must survive."""
+        self.tb.terminate()
+        try:
+            self.tb.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            self.tb.kill()
+        time.sleep(2)
+        self.tb = subprocess.Popen(
+            [
+                THUNDERBIRD,
+                "-no-remote",
+                "-headless",
+                "-profile",
+                str(PROFILE),
+                "-marionette",
+                "-remote-allow-system-access",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.time() + 90
+        while True:
+            try:
+                self.m = Marionette(host="127.0.0.1", port=MARIONETTE_PORT)
+                self.m.start_session()
+                break
+            except Exception:
+                if time.time() > deadline:
+                    raise RuntimeError("Marionette never came up after restart")
+                time.sleep(1)
+        self.m.set_context(Marionette.CONTEXT_CHROME)
+        profile_path = self.m.execute_script(
+            'return Services.dirsvc.get("ProfD", Ci.nsIFile).path;'
+        )
+        if profile_path != str(PROFILE):
+            raise RuntimeError("restart landed on the wrong profile — aborting")
+
     def exec(self, script):
         """Run chrome-privileged JS; async code just returns a promise."""
         return self.m.execute_script(f"return (async () => {{\n{script}\n}})();")
@@ -725,6 +764,161 @@ def test_settings_tab(h):
     report("Settings opens a focused tab with sections", ok, f"{found}")
 
 
+FIXTURE_FILE = ROOT / "tests" / "Re_ Rental Tour Confirmed W_Meradith Dollaghan.html"
+
+
+def _fixture_body():
+    import re as _re
+
+    html = FIXTURE_FILE.read_text(errors="replace")
+    match = _re.search(r"<body[^>]*>(.*)</body>", html, _re.S | _re.I)
+    return match.group(1) if match else html
+
+
+def test_real_email_fixture(h):
+    """The user's real-world reply draft: 88 KB of Outlook-style HTML.
+    The draft region must be corrected while the quote and bold survive,
+    and the chain must not blow up on the payload."""
+    open_compose(h, _fixture_body())
+    before = read_editor(h)
+    run_with_prompt(
+        h,
+        "Fix grammar, spelling and punctuation; lightly improve clarity. "
+        "Keep the structure and formatting. Reply with the corrected draft text only.",
+    )
+    after, elapsed = wait_for_editor_change(h, before["html"])
+    html = after["html"]
+    text = after["text"]
+    corrected = text != before["text"]
+    # "Julius Kleiner Park" only exists inside the quoted message: it must
+    # survive the correction of the draft region above it.
+    ok = (
+        elapsed < 8.0
+        and corrected
+        and "Julius Kleiner Park" in text
+        and "Hi Meradith" in text
+    )
+    report(
+        "real email fixture: corrected, quoted thread preserved",
+        ok,
+        f"{elapsed:.1f}s corrected={corrected} quote={'Julius Kleiner Park' in text} — head: {text[:80]}",
+    )
+
+
+def test_rules_persistence_across_restart(h):
+    """A registered file rule must survive a Thunderbird restart."""
+    # Open the settings tab and register a probe rule through its page.
+    uuid = h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose") ||
+               Services.wm.getMostRecentWindow("mail:3pane");
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           return b ? ((b.getAttribute("style") || "").match(/moz-extension:\/\/([^\/]+)\//) || [])[1] : null;"""
+    )
+    if not uuid:
+        # no compose window open — open one just to read the extension UUID
+        open_compose(h, "<p>uuid probe</p>")
+        uuid = h.exec(
+            """const b = Services.wm.getMostRecentWindow("msgcompose").document
+                   .getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+               return (b.getAttribute("style") || "").match(/moz-extension:\/\/([^\/]+)\//)[1];"""
+        )
+    h.exec(
+        f"""Services.wm.getMostRecentWindow("mail:3pane").document
+              .getElementById("tabmail").openTab("contentTab", {{
+                  url: "moz-extension://{uuid}/settings.html" }});
+            return null;"""
+    )
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        time.sleep(0.5)
+        if h.exec(
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               return w.document.getElementById("tabmail").tabInfo.some(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });"""
+        ):
+            break
+    time.sleep(2)  # let the settings page finish loading
+    count = "(no readback)"
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        h.exec(
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });
+               if (!tab) return null;
+               const script =
+                 "content.wrappedJSObject.__mt.registerProbeRule()" +
+                 ".then(n => { content.document.title = 'MTRULES:' + n; })" +
+                 ".catch(e => { content.document.title = 'MTRULES-ERR:' + e; });";
+               tab.browser.messageManager.loadFrameScript(
+                 "data:application/javascript;charset=utf-8," + encodeURIComponent(script), false);
+               return true;"""
+        )
+        time.sleep(1.5)
+        count = h.exec(
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });
+               return tab ? (tab.browser.contentTitle || "") : "";"""
+        )
+        if isinstance(count, str) and count.startswith("MTRULES:"):
+            break
+    ok_before = isinstance(count, str) and count.startswith("MTRULES:1")
+    if not ok_before:
+        report("registered files persist across restart", False, f"registration readback: {count!r}")
+        return
+
+    h.restart()
+
+    h.exec(
+        f"""Services.wm.getMostRecentWindow("mail:3pane").document
+              .getElementById("tabmail").openTab("contentTab", {{
+                  url: "moz-extension://{uuid}/settings.html" }});
+            return null;"""
+    )
+    time.sleep(4)
+    after_title = None
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        h.exec(
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });
+               if (!tab) return null;
+               const script =
+                 "content.wrappedJSObject.__mt.countRules().then(n => {" +
+                 "  content.document.title = 'MTRULES2:' + n; });";
+               tab.browser.messageManager.loadFrameScript(
+                 "data:application/javascript;charset=utf-8," + encodeURIComponent(script), false);
+               return true;"""
+        )
+        time.sleep(1.5)
+        after_title = h.exec(
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });
+               return tab ? (tab.browser.contentTitle || "") : "";"""
+        )
+        if isinstance(after_title, str) and after_title.startswith("MTRULES2:"):
+            break
+    ok = isinstance(after_title, str) and after_title.startswith("MTRULES2:1")
+    report(
+        "registered files persist across restart",
+        ok,
+        f"before restart: {count} · after restart: {after_title!r}",
+    )
+
+
 def main():
     if shutil.which(THUNDERBIRD) is None:
         sys.exit(f"Thunderbird binary not found: {THUNDERBIRD}")
@@ -740,6 +934,8 @@ def main():
         test_recipient_from_history(h)
         test_settings_tab(h)
         test_prompt_window_v2(h)
+        test_real_email_fixture(h)
+        test_rules_persistence_across_restart(h)
     finally:
         h.teardown()
     passed = sum(results)

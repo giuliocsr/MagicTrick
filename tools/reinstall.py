@@ -55,6 +55,7 @@ PACKAGE_FILES = [
     "icons/wand-16.png",
     "icons/wand-32.png",
     "icons/wand-64.png",
+    "icons/wand.svg",
 ]
 
 

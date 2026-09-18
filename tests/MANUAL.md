@@ -55,8 +55,9 @@ Write an email to yourself; you never need to send it.
    attached the correspondence." where Pietro is an address-book contact and
    Giorgio is just someone you exchange email with (no contact entry): Pietro
    appears in To, Giorgio in Cc, notification lists both.
-10. **Settings** — right-click the button → "Settings" → a focused tab
-    opens with "Registered files rules" and "Standard prompt" sections.
+10. **Settings** — right-click the button → "Settings" → a focused, light
+    themed tab opens with the wand logo and "Registered files rules",
+    "Standard prompt" and "Diagnostics" sections.
     Register phrase "reference letters" with a small PDF in the rules
     section. Draft "Attached you can find my reference
     letters." and run MagicTrick: the file is attached and listed in the
@@ -68,6 +69,10 @@ Write an email to yourself; you never need to send it.
     signed with the sender's FIRST name only (e.g. "Best regards, Giulio").
 13. **First click of a fresh compose window** — must succeed immediately
     (no "All AI endpoints failed" on first use).
+14. **Prompt window layout** — buttons full width BELOW the textarea; the
+    textarea grows/shrinks when the window is resized vertically.
+15. **Diagnostics** — Settings → Diagnostics lists the last chain events
+    (endpoint, status, latency).
 
 Report anything odd with: what you did, what you expected, what happened
 (the exact notification text if one appeared).
