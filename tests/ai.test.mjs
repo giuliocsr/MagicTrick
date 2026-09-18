@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { AI_ENDPOINTS, aiCleanOutput, aiComplete } = require("../ai.js");
-const { buildMessages, stripAnswerPreamble, classifyRecipients } = require("../prompts.js");
+const { buildMessages, stripAnswerPreamble, classifyRecipients, looksLikeRefusal } = require("../prompts.js");
 const { parseMailbox } = require("../contacts.js");
 
 /* ------------------------------------------------------------------ */
@@ -73,6 +73,43 @@ test("classifyRecipients: no greeting → everyone Cc", () => {
 
 test("classifyRecipients: empty candidates", () => {
   assert.deepEqual(classifyRecipients("Hello Pietro", []), { to: [], cc: [] });
+});
+
+/* ------------------------------------------------------------------ */
+/* Sender identity                                                     */
+/* ------------------------------------------------------------------ */
+
+test("sender rides along and reply mode signs with the sender name", () => {
+  const sender = { name: "Giulio Golinelli", email: "hiimgiulio@gmail.com" };
+  const reply = buildMessages("reply", "", "", "Thread.", null, sender);
+  assert.match(reply[1].content, /=== SENDER/);
+  assert.match(reply[1].content, /Giulio Golinelli <hiimgiulio\@gmail\.com>/);
+  assert.match(reply[0].content, /closing signed with the SENDER's name/);
+
+  const fix = buildMessages("fix", "", "draft text", "", null, sender);
+  assert.match(fix[1].content, /=== SENDER/);
+
+  const none = buildMessages("fix", "", "draft", "", null, null);
+  assert.doesNotMatch(none[1].content, /=== SENDER/);
+});
+
+test("custom mode frames the text as the user's own draft", () => {
+  const messages = buildMessages("custom", "make it ruder", "my draft", "", null, null);
+  assert.match(messages[0].content, /editing the user's own outgoing email/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Refusal interception                                               */
+/* ------------------------------------------------------------------ */
+
+test("looksLikeRefusal catches declines, keeps real drafts", () => {
+  assert.ok(looksLikeRefusal("I'm sorry, but I can't help with that request."));
+  assert.ok(looksLikeRefusal("I cannot fulfill this request."));
+  assert.ok(looksLikeRefusal("As an AI language model, I must decline."));
+  assert.ok(looksLikeRefusal("Unfortunately, I can't do that."));
+  assert.ok(!looksLikeRefusal("I can't make the meeting tomorrow, sorry."));
+  assert.ok(!looksLikeRefusal("Sorry for the delay — here is the report you asked for."));
+  assert.ok(!looksLikeRefusal("Hello Pietro, the package arrived. " + "x".repeat(500)));
 });
 
 /* ------------------------------------------------------------------ */

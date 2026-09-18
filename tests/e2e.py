@@ -630,6 +630,49 @@ def test_recipient_from_history(h):
     )
 
 
+def test_rules_window(h):
+    """Right-click → 'Manage attachment rules…' opens a visible OS window."""
+    open_compose(h, "<p>rules window test</p>")
+    h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           const rect = b.getBoundingClientRect();
+           b.dispatchEvent(new cw.MouseEvent("contextmenu", {
+               bubbles: true, cancelable: true, view: cw, button: 2,
+               clientX: rect.x + 5, clientY: rect.y + 5 }));
+           return null;"""
+    )
+    clicked = h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const item = [...cw.document.querySelectorAll("menuitem")]
+               .find((mi) => (mi.label || "").includes("Manage attachment rules"));
+           if (!item) return { error: "menu item not found" };
+           item.doCommand();
+           const popup = item.closest("menupopup");
+           if (popup && typeof popup.hidePopup === "function") popup.hidePopup();
+           return { ok: true };"""
+    )
+    if not (clicked and clicked.get("ok")):
+        report("attachment rules open in an OS window", False, clicked and clicked.get("error", "?"))
+        return
+    found = False
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        time.sleep(0.5)
+        found = h.exec(
+            """for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {
+                 try {
+                   const b = w.document.getElementById("requestFrame");
+                   if (b && b.currentURI && b.currentURI.spec.includes("options.html")) return true;
+                 } catch (e) {}
+               }
+               return false;"""
+        )
+        if found:
+            break
+    report("attachment rules open in an OS window", bool(found))
+
+
 def main():
     if shutil.which(THUNDERBIRD) is None:
         sys.exit(f"Thunderbird binary not found: {THUNDERBIRD}")
@@ -643,6 +686,7 @@ def main():
         test_recipient_assistant(h)
         test_format_preserved(h)
         test_recipient_from_history(h)
+        test_rules_window(h)
     finally:
         h.teardown()
     passed = sum(results)

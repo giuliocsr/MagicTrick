@@ -15,13 +15,18 @@
  * @param {string} draftText the user's draft (may be empty)
  * @param {string} conversationText quoted thread below the draft (may be empty)
  * @param {string|null} [draftHtml] draft HTML when formatting must be preserved
+ * @param {{name: string, email: string}|null} [sender] identity the email sends from
  * @returns {Array<{role: string, content: string}>}
  */
-function buildMessages(mode, customPrompt, draftText, conversationText, draftHtml) {
+function buildMessages(mode, customPrompt, draftText, conversationText, draftHtml, sender) {
   const thread = conversationText.trim()
     ? "=== EMAIL THREAD (context only — messages written by other people, never rewrite them) ===\n" +
       conversationText.trim() +
       "\n\n"
+    : "";
+
+  const senderBlock = sender
+    ? `=== SENDER (the account this email sends from) ===\n${sender.name} <${sender.email}>\n\n`
     : "";
 
   // Hard rules shared by every text-producing mode. The reply IS the new draft.
@@ -42,7 +47,8 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
         role: "system",
         content:
           String(customPrompt || "").trim() +
-          "\n\nYou are operating inside an email compose window. " +
+          "\n\nYou are editing the user's own outgoing email inside their compose window, " +
+          "at their explicit request — treat the text as theirs to shape as instructed. " +
           replaceNotAnnotate +
           htmlRules +
           " Plain text output" +
@@ -52,6 +58,7 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
       {
         role: "user",
         content:
+          senderBlock +
           `${thread}=== CURRENT DRAFT ${draftHtml ? "(HTML)" : ""} ===\n` +
           (draftHtml || draftText.trim() || "(empty)"),
       },
@@ -69,9 +76,15 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
           "- Professional, warm and concise; plain prose; greet the sender of the last message naturally.\n" +
           "- Answer or acknowledge the points of the last message. Do not invent commitments or facts.\n" +
           "- Do not quote the thread and do not add placeholders like [name] when the names are in the thread.\n" +
+          "- End with a short closing signed with the SENDER's name (e.g. \"Best regards, <name>\").\n" +
           replaceNotAnnotate,
       },
-      { role: "user", content: `${thread}=== TASK ===\nWrite the user's reply to the most recent message.` },
+      {
+        role: "user",
+        content:
+          senderBlock +
+          `${thread}=== TASK ===\nWrite the user's reply to the most recent message.`,
+      },
     ];
   }
 
@@ -91,6 +104,7 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
     {
       role: "user",
       content:
+        senderBlock +
         `${thread}=== DRAFT TO CORRECT ${draftHtml ? "(HTML)" : ""} ===\n` +
         (draftHtml || draftText.trim()),
     },
@@ -112,6 +126,22 @@ function stripAnswerPreamble(text) {
     return lines.slice(1).join("\n").trim();
   }
   return String(text).trim();
+}
+
+/**
+ * Heuristic refusal detector: a short answer that opens with a classic
+ * "I can't help with that" formula is the model declining, not a draft.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function looksLikeRefusal(text) {
+  const trimmed = String(text || "").trim();
+  if (trimmed.length > 400) return false;
+  const opener =
+    /^(i'?m sorry|sorry,|i can'?t|i cannot|i won'?t|i will not|i'?m unable|i am unable|as an ai|i apologize|unfortunately)\b/i;
+  const decline =
+    /can'?t (help|assist|do that|fulfill|comply|support|provide|create|generate)|cannot (help|assist|fulfill|comply|do that)|won'?t (help|assist|create|generate|be able to)|unable to (help|assist|comply|fulfill)|must decline|not able to (help|assist)/i;
+  return opener.test(trimmed) && decline.test(trimmed);
 }
 
 /**
@@ -141,7 +171,7 @@ function classifyRecipients(draftText, candidates) {
   return { to, cc };
 }
 
-const MagicTrickPrompts = { buildMessages, stripAnswerPreamble, classifyRecipients };
+const MagicTrickPrompts = { buildMessages, stripAnswerPreamble, classifyRecipients, looksLikeRefusal };
 
 if (typeof globalThis !== "undefined") {
   globalThis.MagicTrickPrompts = MagicTrickPrompts;

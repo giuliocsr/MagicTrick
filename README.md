@@ -12,9 +12,9 @@ between you and regret.
 | Action | Result |
 |---|---|
 | Click the **wand** (or <kbd>Ctrl+Shift+G</kbd>) | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. Formatted drafts (bullet lists, links, emphasis) travel as HTML and keep their formatting. |
-| Click the wand in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below. |
+| Click the wand in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below, signed off with your sender name ("Best regards, …") inferred from the sending address. |
 | Right-click → **MagicTrick with prompt…** | A small OS window titled "MagicTrick — your instruction" opens, auto-sized to its content, with the input focused: type any instruction ("make it more formal", "translate to German") and press <kbd>Enter</kbd>. |
-| Right-click → **Manage attachment rules…** | Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
+| Right-click → **Manage attachment rules…** | Opens the rules manager in its own focused window. Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
 | Mentions of your contacts | People whose names appear in the draft are added automatically — from your address books **and from your message history**: the person greeted goes to **To**, other referenced people to **Cc**. A notification always lists what was added. |
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
@@ -65,6 +65,14 @@ draft region replaced ◀───────────  corrected text
   first click of a session is fast too.
 - Reasoning-heavy free models are deliberately avoided: they can think for 10-30 s
   before answering. If you swap endpoints in `ai.js`, keep replacements fast.
+- There is deliberately **no startup warm-up request**: the background page sleeps
+  when idle and every wake would re-run one, racing your first click into the
+  endpoints' anonymous concurrency limits. Failures are logged to Thunderbird's
+  error console (Tools → Developer Tools → Error Console) as `[MagicTrick]`.
+- If the AI declines an instruction (e.g. a deliberately offensive custom prompt),
+  MagicTrick does **not** replace your draft: a notification reports what the AI
+  said instead. The models are asked to treat the text as your own draft at your
+  explicit request, but no attempt is made to bypass their safety filters.
 - If the button seems dead in a compose window that was already open when you installed
   MagicTrick, close and reopen that window once.
 

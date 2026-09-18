@@ -31,10 +31,11 @@ messenger.composeScripts
   .register({ js: [{ file: "compose.js" }] })
   .catch(() => {});
 
-// Warm up the AI endpoints at startup: the first request from a fresh
-// Thunderbird process pays DNS/TLS/gateway cold-start costs, which could
-// otherwise make the first click of a session unnecessarily slow.
-MagicTrickAI.aiComplete([{ role: "user", content: "ok" }]).catch(() => {});
+// NOTE: deliberately NO startup warm-up. The MV2 background page sleeps when
+// idle and every wake would re-run one — racing the user's first click into
+// the anonymous endpoints' concurrency limits (LLM7: one concurrent request,
+// Pollinations throttles bursts) and failing it. One DNS/TLS handshake on
+// the first click of a session is the cheaper failure mode.
 
 // The wand itself: one click = polish.
 messenger.composeAction.onClicked.addListener((tab) => {
@@ -102,13 +103,22 @@ async function findActiveComposeTab() {
   }
 }
 
-/** Open the attachment-rules page (options page), with a robust fallback. */
+/**
+ * Open the attachment-rules page as its own OS window — a tab in the main
+ * window is easy to miss while composing (that is why "nothing happened").
+ */
 async function openRulesPage() {
   try {
-    await messenger.runtime.openOptionsPage();
+    await messenger.windows.create({
+      url: "options.html",
+      type: "popup",
+      width: 640,
+      height: 480,
+      focused: true,
+    });
   } catch {
     try {
-      await messenger.tabs.create({ url: messenger.runtime.getURL("options.html") });
+      await messenger.runtime.openOptionsPage();
     } catch {
       notify("Could not open the attachment-rules page.");
     }
@@ -131,6 +141,32 @@ messenger.runtime.onMessage.addListener((msg, sender) => {
     }
   }
 });
+
+/**
+ * The identity this compose window will send from, with a display name
+ * inferred from the address itself ("giulio.golinelli@…" → "Giulio Golinelli").
+ * @returns {Promise<{name: string, email: string}|null>}
+ */
+async function getSender(tabId) {
+  try {
+    const details = await messenger.compose.getComposeDetails(tabId);
+    const raw = details.from ? String(details.from) : "";
+    const mailbox = MagicTrickContacts.parseMailbox(raw) || (raw.includes("@") ? { email: raw.trim() } : null);
+    if (!mailbox) return null;
+    const name =
+      mailbox.name && mailbox.name !== mailbox.email
+        ? mailbox.name
+        : mailbox.email
+            .split("@")[0]
+            .split(/[._\-]+/)
+            .filter(Boolean)
+            .map((part) => part[0].toUpperCase() + part.slice(1))
+            .join(" ");
+    return { name, email: mailbox.email };
+  } catch {
+    return null;
+  }
+}
 
 /** Make sure compose.js is listening in the given compose tab (idempotent). */
 async function ensureComposeScript(tabId) {
@@ -173,7 +209,8 @@ async function runMagicTrick(tabId, opts) {
       return;
     }
 
-    // Local context: contact candidates and registered attachment rules.
+    // Local context: sender identity, contact candidates, attachment rules.
+    const sender = await getSender(tabId);
     const candidates = await MagicTrickContacts.findContactCandidates(draft).catch(() => []);
     const attachments = await MagicTrickAttachments.matchedAttachments(draft).catch(() => []);
 
@@ -184,9 +221,19 @@ async function runMagicTrick(tabId, opts) {
       opts.prompt,
       draft,
       conversation,
-      formatted ? draftHtml : null
+      formatted ? draftHtml : null,
+      sender
     );
     const answer = MagicTrickPrompts.stripAnswerPreamble(await MagicTrickAI.aiComplete(messages));
+
+    // A refusal is not a draft: show what the AI said instead of replacing
+    // the user's text with it. Never applied in fix mode — there a "sorry,
+    // I can't…" is usually the user's own sentence being corrected.
+    if (mode !== "fix" && MagicTrickPrompts.looksLikeRefusal(answer)) {
+      console.error("[MagicTrick] AI declined:", answer);
+      notify(`The AI declined this instruction: “${answer.slice(0, 180)}”`);
+      return;
+    }
 
     let applyMsg = { command: "apply", text: answer };
     if (formatted) {
@@ -240,6 +287,7 @@ async function runMagicTrick(tabId, opts) {
 
     if (summary.length > 1) notify(summary.join("  ·  "));
   } catch (err) {
+    console.error("[MagicTrick] run failed:", err);
     notify(String(err.message || err).slice(0, 300));
   } finally {
     inFlight.delete(tabId);
