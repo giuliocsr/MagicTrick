@@ -42,12 +42,12 @@ EXTENSION_FILES = [
     "attachments.js",
     "background.js",
     "compose.js",
-    "options.html",
-    "options.js",
-    "options.css",
     "prompt.html",
     "prompt.js",
     "prompt.css",
+    "settings.html",
+    "settings.js",
+    "settings.css",
     "icons",
 ]
 
@@ -323,17 +323,41 @@ def activate_menu_item(h):
         raise RuntimeError(clicked and clicked.get("error", "menu activation failed"))
 
 
-def run_with_prompt(h, instruction, timeout=90):
-    """Open the prompt entry via the wand's context menu, then fill and submit
-    the OS prompt window. The window's page runs in a remote process, so a
-    chrome frame script (privileged, in-process) does the typing.
-    Returns the deadline for the change wait."""
-    activate_menu_item(h)
-    window_found = False
-    deadline = time.time() + 15
+def _frame_script_on_prompt_window(h, script):
+    """Run a JS snippet inside the prompt window's page (remote process) via a
+    chrome frame script. Snippets communicate back through document.title."""
+    return h.exec(
+        f"""for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {{
+               try {{
+                 const b = w.document.getElementById("requestFrame");
+                 if (!b || !b.currentURI.spec.includes("prompt.html")) continue;
+                 b.messageManager.loadFrameScript(
+                   "data:application/javascript;charset=utf-8,"
+                   + encodeURIComponent({json_str(script)}), false);
+                 return true;
+               }} catch (e) {{}}
+             }}
+             return false;"""
+    )
+
+
+def _prompt_window_title(h):
+    return h.exec(
+        """for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {
+             const b = w.document.getElementById("requestFrame");
+             if (b && b.currentURI.spec.includes("prompt.html")) return w.document.title;
+           }
+           return null;"""
+    )
+
+
+def _wait_prompt_window_ready(h, timeout=15):
+    """Wait until the prompt window exists AND its page script is alive
+    (the pre-filled instruction has landed, proving listeners are attached)."""
+    deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(0.5)
-        window_found = h.exec(
+        found = h.exec(
             """for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {
                  try {
                    const b = w.document.getElementById("requestFrame");
@@ -342,34 +366,59 @@ def run_with_prompt(h, instruction, timeout=90):
                }
                return false;"""
         )
-        if window_found:
-            break
-    if not window_found:
-        raise RuntimeError("prompt window never opened")
+        if not found:
+            continue
+        _frame_script_on_prompt_window(
+            h,
+            "const i = content.document.getElementById('instruction');"
+            "if (i && i.value) content.document.title = 'MTREADY:' + i.value.length;",
+        )
+        time.sleep(0.4)
+        title = _prompt_window_title(h) or ""
+        if title.startswith("MTREADY:"):
+            return True
+    raise RuntimeError("prompt window never became ready")
 
-    frame_script = (
+
+def run_with_prompt(h, instruction, timeout=90):
+    """Open the prompt entry via the wand's context menu, wait for the page to
+    be live, then fill and submit. Returns the deadline for the change wait."""
+    activate_menu_item(h)
+    _wait_prompt_window_ready(h)
+    _frame_script_on_prompt_window(
+        h,
         "const doc = content.document;"
         "const input = doc.getElementById('instruction');"
         f"input.value = {json_str(instruction)};"
         "doc.getElementById('prompt-form').dispatchEvent("
-        "  new doc.defaultView.Event('submit', {bubbles: true, cancelable: true}));"
+        "  new doc.defaultView.Event('submit', {bubbles: true, cancelable: true}));",
     )
-    submitted = h.exec(
-        f"""for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {{
-               try {{
-                 const b = w.document.getElementById("requestFrame");
-                 if (!b || !b.currentURI.spec.includes("prompt.html")) continue;
-                 b.messageManager.loadFrameScript(
-                   "data:application/javascript;charset=utf-8,"
-                   + encodeURIComponent({json_str(frame_script)}), false);
-                 return true;
-               }} catch (e) {{}}
-             }}
-             return false;"""
-    )
-    if not submitted:
-        raise RuntimeError("could not reach the prompt window content")
     return time.time() + timeout
+
+
+def prompt_window_prefill(h):
+    """Open the prompt window and return its pre-filled instruction."""
+    activate_menu_item(h)
+    _wait_prompt_window_ready(h)
+    _frame_script_on_prompt_window(
+        h,
+        "content.document.title = 'MTPREFILL:' + "
+        "content.document.getElementById('instruction').value.slice(0, 200);",
+    )
+    time.sleep(0.4)
+    title = _prompt_window_title(h) or ""
+    close_compose_windows(h)  # also closes lingering prompt windows
+    return title[len("MTPREFILL:"):] if title.startswith("MTPREFILL:") else None
+
+
+def test_prompt_window_v2(h):
+    prefill = prompt_window_prefill(h)
+    ok = bool(prefill) and "Fix ONLY grammar" in prefill
+    report(
+        "prompt window pre-filled with the active standard instruction",
+        ok,
+        f"prefill: {str(prefill)[:90]}",
+    )
 
 
 def read_editor(h):
@@ -630,9 +679,9 @@ def test_recipient_from_history(h):
     )
 
 
-def test_rules_window(h):
-    """Right-click → 'Manage attachment rules…' opens a visible OS window."""
-    open_compose(h, "<p>rules window test</p>")
+def test_settings_tab(h):
+    """Right-click → 'Settings' opens a focused Thunderbird tab with sections."""
+    open_compose(h, "<p>settings tab test</p>")
     h.exec(
         """const cw = Services.wm.getMostRecentWindow("msgcompose");
            const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
@@ -645,32 +694,35 @@ def test_rules_window(h):
     clicked = h.exec(
         """const cw = Services.wm.getMostRecentWindow("msgcompose");
            const item = [...cw.document.querySelectorAll("menuitem")]
-               .find((mi) => (mi.label || "").includes("Manage attachment rules"));
-           if (!item) return { error: "menu item not found" };
+               .find((mi) => (mi.label || "").trim() === "Settings");
+           if (!item) return { error: "Settings menu item not found" };
            item.doCommand();
            const popup = item.closest("menupopup");
            if (popup && typeof popup.hidePopup === "function") popup.hidePopup();
            return { ok: true };"""
     )
     if not (clicked and clicked.get("ok")):
-        report("attachment rules open in an OS window", False, clicked and clicked.get("error", "?"))
+        report("Settings opens a focused tab with sections", False,
+               clicked and clicked.get("error", "?"))
         return
     found = False
     deadline = time.time() + 10
     while time.time() < deadline:
         time.sleep(0.5)
         found = h.exec(
-            """for (const w of Services.wm.getEnumerator("mail:extensionPopup")) {
-                 try {
-                   const b = w.document.getElementById("requestFrame");
-                   if (b && b.currentURI && b.currentURI.spec.includes("options.html")) return true;
-                 } catch (e) {}
-               }
-               return false;"""
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });
+               if (!tab) return false;
+               return { active: w.document.getElementById("tabmail").selectedTab === tab,
+                        title: tab.browser.contentTitle || "" };"""
         )
         if found:
             break
-    report("attachment rules open in an OS window", bool(found))
+    ok = bool(found) and (found is True or found.get("active"))
+    report("Settings opens a focused tab with sections", ok, f"{found}")
 
 
 def main():
@@ -686,7 +738,8 @@ def main():
         test_recipient_assistant(h)
         test_format_preserved(h)
         test_recipient_from_history(h)
-        test_rules_window(h)
+        test_settings_tab(h)
+        test_prompt_window_v2(h)
     finally:
         h.teardown()
     passed = sum(results)

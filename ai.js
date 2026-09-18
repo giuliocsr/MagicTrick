@@ -87,11 +87,26 @@ function aiCleanOutput(text) {
 
 /**
  * Complete a chat: race the two fast endpoints, backstop with the third.
+ * A chain that fails FAST (throttle/4xx class, not timeouts) is retried
+ * once after a short pause — the anonymous endpoints occasionally reject a
+ * first burst and accept the immediate retry.
  * @param {Array<{role: string, content: string}>} messages
  * @returns {Promise<string>}
  * @throws {Error} with one line per endpoint when every endpoint failed
  */
-function aiComplete(messages) {
+async function aiComplete(messages) {
+  const started = Date.now();
+  try {
+    return await aiCompleteOnce(messages);
+  } catch (err) {
+    const fastFailure = Date.now() - started < 2500;
+    if (!fastFailure) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return aiCompleteOnce(messages);
+  }
+}
+
+function aiCompleteOnce(messages) {
   const FAST_LANES = 2; // endpoints raced in parallel at t=0
   const controllers = [];
   const started = new Set();

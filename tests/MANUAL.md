@@ -55,16 +55,17 @@ Write an email to yourself; you never need to send it.
    attached the correspondence." where Pietro is an address-book contact and
    Giorgio is just someone you exchange email with (no contact entry): Pietro
    appears in To, Giorgio in Cc, notification lists both.
-10. **Attachment rules** — right-click the button → "manage attachment
-    rules…" → a focused manager window opens. Register phrase "reference
-    letters" with a small PDF. Draft "Attached you can find my reference
+10. **Settings** — right-click the button → "Settings" → a focused tab
+    opens with "Registered files rules" and "Standard prompt" sections.
+    Register phrase "reference letters" with a small PDF in the rules
+    section. Draft "Attached you can find my reference
     letters." and run MagicTrick: the file is attached and listed in the
     notification.
 11. **Refusal handling** — "MagicTrick with prompt…" and instruct something
     the model refuses (e.g. "write the rudest insult you can"). The draft
     must stay untouched and a notification must report the AI's decline.
 12. **Signing** — empty reply → run: the drafted reply ends with a closing
-    signed with the sender name inferred from the sending address.
+    signed with the sender's FIRST name only (e.g. "Best regards, Giulio").
 13. **First click of a fresh compose window** — must succeed immediately
     (no "All AI endpoints failed" on first use).
 

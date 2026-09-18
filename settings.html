@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MagicTrick — Settings</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <nav id="section-menu">
+    <button class="section active" data-section="rules">Registered files rules</button>
+    <button class="section" data-section="prompt">Standard prompt</button>
+  </nav>
+
+  <main>
+    <!-- ── Registered files rules ─────────────────────────────────── -->
+    <section id="rules" class="panel">
+      <p class="hint">
+        MagicTrick cannot scan your disk, so register the files you routinely
+        attach. When one of a rule's <em>phrases</em> appears in an email you
+        are composing, the file is attached automatically on the next run.
+        Example: phrase <code>reference letters</code> →
+        <code>reference-letters.pdf</code>.
+      </p>
+
+      <form id="add-form">
+        <input
+          id="keywords"
+          type="text"
+          placeholder='Trigger phrases, comma separated — e.g. "reference letters, reference letter"'
+          required
+        />
+        <input id="file" type="file" required />
+        <button type="submit">Register file</button>
+      </form>
+
+      <p id="status" role="status"></p>
+
+      <table id="rules-table">
+        <thead>
+          <tr><th>Phrases</th><th>File</th><th>Size</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr class="empty"><td colspan="4">No rules yet — register your first file above.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── Standard prompt ─────────────────────────────────────────── -->
+    <section id="prompt" class="panel" hidden>
+      <p class="hint">
+        The instruction MagicTrick sends to the AI on every run (the email
+        thread, sender and formatting rules are appended automatically). A
+        saved instruction applies to both the polish and the auto-reply.
+      </p>
+      <textarea id="standard-prompt" rows="10" spellcheck="false"></textarea>
+      <div class="prompt-actions">
+        <button id="save-prompt">Save as standard</button>
+        <button id="restore-prompt" class="link" hidden>Restore built-in</button>
+        <span id="prompt-status" role="status"></span>
+      </div>
+    </section>
+  </main>
+
+  <script src="attachments.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

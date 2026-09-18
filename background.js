@@ -2,7 +2,9 @@
  * MagicTrick — background orchestration.
  *
  * The wand button polishes in one click; its right-click menu and
- * Ctrl+Shift+G offer the prompt window and the attachment-rules page.
+ * Ctrl+Shift+G offer the prompt window and the Settings tab. A saved
+ * standard instruction ("Apply for all future emails") governs both the
+ * polish and the auto-reply path.
  *
  * Flow of a run:
  *   wand click / Ctrl+Shift+G / prompt window submit
@@ -18,6 +20,18 @@
 /* global MagicTrickAI, MagicTrickPrompts, MagicTrickContacts, MagicTrickAttachments */
 
 const BUTTON_TITLE = "MagicTrick — fix this email with AI";
+
+/** The persisted standard instruction ("Apply for all future emails"). */
+let savedInstruction = null;
+messenger.storage.local
+  .get("standardInstruction")
+  .then((data) => (savedInstruction = data.standardInstruction || null))
+  .catch(() => {});
+messenger.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.standardInstruction) {
+    savedInstruction = changes.standardInstruction.newValue || null;
+  }
+});
 
 /** True when the HTML carries formatting the AI must preserve. */
 const FORMATTING_RE = /<(ul|ol|li|b|strong|i|em|u|a\s|table|h[1-6])\b/i;
@@ -50,15 +64,15 @@ messenger.menus.create({
   contexts: ["compose_action"],
 });
 messenger.menus.create({
-  id: "magictrick-manage-attachments",
-  title: "Manage attachment rules…",
+  id: "magictrick-settings",
+  title: "Settings",
   contexts: ["compose_action"],
 });
 
 messenger.menus.onClicked.addListener((info, tab) => {
   if (!tab || tab.id == null) return;
-  if (info.menuItemId === "magictrick-manage-attachments") {
-    openRulesPage();
+  if (info.menuItemId === "magictrick-settings") {
+    openSettingsPage();
     return;
   }
   if (info.menuItemId === "magictrick-with-prompt") {
@@ -104,28 +118,33 @@ async function findActiveComposeTab() {
 }
 
 /**
- * Open the attachment-rules page as its own OS window — a tab in the main
- * window is easy to miss while composing (that is why "nothing happened").
+ * Open the Settings page as a real Thunderbird tab and make sure the user
+ * actually sees it: switch to the tab and raise the main window (the compose
+ * window is a separate OS window and would otherwise stay on top).
  */
-async function openRulesPage() {
+async function openSettingsPage() {
   try {
-    await messenger.windows.create({
-      url: "options.html",
-      type: "popup",
-      width: 640,
-      height: 480,
-      focused: true,
+    await messenger.tabs.create({
+      url: messenger.runtime.getURL("settings.html"),
+      active: true,
     });
-  } catch {
-    try {
-      await messenger.runtime.openOptionsPage();
-    } catch {
-      notify("Could not open the attachment-rules page.");
+    const windows = await messenger.windows.getAll();
+    const main = windows.find((w) => w.type === "normal");
+    if (main) {
+      await messenger.windows.update(main.id, { focused: true, drawAttention: true });
     }
+  } catch {
+    notify("Could not open the MagicTrick settings.");
   }
 }
 
 messenger.runtime.onMessage.addListener((msg, sender) => {
+  if (msg && msg.type === "get-standard") {
+    return Promise.resolve({
+      instruction: savedInstruction || MagicTrickPrompts.builtInInstruction(),
+      saved: !!savedInstruction,
+    });
+  }
   if (msg && msg.type === "run-custom") {
     // Messages from the prompt window must NOT be routed to the popup "tab"
     // (Thunderbird may attach one as sender.tab) — use the compose window
@@ -153,7 +172,7 @@ async function getSender(tabId) {
     const raw = details.from ? String(details.from) : "";
     const mailbox = MagicTrickContacts.parseMailbox(raw) || (raw.includes("@") ? { email: raw.trim() } : null);
     if (!mailbox) return null;
-    const name =
+    const fullName =
       mailbox.name && mailbox.name !== mailbox.email
         ? mailbox.name
         : mailbox.email
@@ -162,6 +181,8 @@ async function getSender(tabId) {
             .filter(Boolean)
             .map((part) => part[0].toUpperCase() + part.slice(1))
             .join(" ");
+    // Closings are signed with the first name only (user preference).
+    const name = fullName.split(/\s+/)[0] || fullName;
     return { name, email: mailbox.email };
   } catch {
     return null;
@@ -222,7 +243,8 @@ async function runMagicTrick(tabId, opts) {
       draft,
       conversation,
       formatted ? draftHtml : null,
-      sender
+      sender,
+      savedInstruction
     );
     const answer = MagicTrickPrompts.stripAnswerPreamble(await MagicTrickAI.aiComplete(messages));
 

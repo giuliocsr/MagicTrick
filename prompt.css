@@ -10,42 +10,56 @@ body {
 
 body {
   box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: stretch;
   background: -moz-Dialog;
   color: -moz-DialogText;
   padding: 8px;
-  margin: 0;
   width: 100vw;
 }
 
 form {
   box-sizing: border-box;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
 }
 
-input {
-  flex: 1 1 auto;
-  min-width: 12em;
+textarea {
+  box-sizing: border-box;
   width: 100%;
-  padding: 4px 8px;
+  min-height: 7em;
+  resize: none;
+  padding: 6px 8px;
   border: 1px solid ThreeDShadow;
   background: Field;
   color: FieldText;
   font: message-box;
 }
 
-@media (max-width: 380px) {
-  /* Very narrow windows: stack the OK button under the input. */
-  form {
-    flex-direction: column;
-  }
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 button {
   font: message-box;
-  padding: 4px 16px;
+  padding: 4px 14px;
+}
+
+button.link {
+  border: none;
+  background: none;
+  color: -moz-NativeHyperlinkText;
+  text-decoration: underline;
+  padding: 4px 2px;
+}
+
+@media (max-width: 420px) {
+  .actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

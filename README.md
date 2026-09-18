@@ -12,9 +12,9 @@ between you and regret.
 | Action | Result |
 |---|---|
 | Click the **wand** (or <kbd>Ctrl+Shift+G</kbd>) | The draft's grammar, spelling and punctuation are corrected in place. Tone, language and meaning are preserved. Formatted drafts (bullet lists, links, emphasis) travel as HTML and keep their formatting. |
-| Click the wand in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below, signed off with your sender name ("Best regards, …") inferred from the sending address. |
-| Right-click → **MagicTrick with prompt…** | A small OS window titled "MagicTrick — your instruction" opens, auto-sized to its content, with the input focused: type any instruction ("make it more formal", "translate to German") and press <kbd>Enter</kbd>. |
-| Right-click → **Manage attachment rules…** | Opens the rules manager in its own focused window. Register files you routinely send ("reference letters" → `reference-letters.pdf`); from then on, whenever a rule's phrase appears in your draft, the file is attached automatically. |
+| Click the wand in an empty reply | A contextual reply is drafted for you, in the thread's language, based on the conversation below, signed off with your sender **first name** ("Best regards, Giulio") inferred from the sending address. |
+| Right-click → **MagicTrick with prompt…** | A small OS window titled "MagicTrick — your instruction" opens, auto-sized to its content, pre-filled with the active standard instruction, input focused. **Apply this time** runs it once; **Apply for all future emails** also saves it as the new standard — used for both the polish and the auto-reply, with the thread/sender/format context still appended automatically. A "Restore built-in" link reverts. |
+| Right-click → **Settings** | Opens a focused Thunderbird tab with two sections: **Registered files rules** (register files you routinely send — "reference letters" → `reference-letters.pdf`, auto-attached whenever the phrase appears in a draft) and **Standard prompt** (view, save or restore the instruction sent to the AI). |
 | Mentions of your contacts | People whose names appear in the draft are added automatically — from your address books **and from your message history**: the person greeted goes to **To**, other referenced people to **Cc**. A notification always lists what was added. |
 | <kbd>Ctrl+Z</kbd> after any MagicTrick edit | The previous text is restored exactly. Every edit is a single undoable editor transaction. |
 
@@ -65,6 +65,8 @@ draft region replaced ◀───────────  corrected text
   first click of a session is fast too.
 - Reasoning-heavy free models are deliberately avoided: they can think for 10-30 s
   before answering. If you swap endpoints in `ai.js`, keep replacements fast.
+- A chain that fails fast (throttle class) is retried once automatically before
+  the error surfaces; a second manual click also recovers instantly.
 - There is deliberately **no startup warm-up request**: the background page sleeps
   when idle and every wake would re-run one, racing your first click into the
   endpoints' anonymous concurrency limits. Failures are logged to Thunderbird's

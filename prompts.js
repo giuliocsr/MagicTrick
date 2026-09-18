@@ -3,11 +3,62 @@
  *
  * Kept free of Thunderbird APIs so it can be unit-tested in plain Node
  * (loaded both as a background script and via require()).
+ *
+ * The standard instruction is editable and persistable: when the user saved
+ * one through the prompt window ("Apply for all future emails") or the
+ * Settings page, it replaces the built-in instruction for BOTH the polish
+ * and the auto-reply path.
  */
 "use strict";
 
 /**
- * Build the chat messages for the requested mode.
+ * The built-in standard instruction: what a wand click asks the AI to do.
+ * Exposed so the prompt window and Settings can pre-fill their editors and
+ * offer "restore built-in".
+ * @returns {string}
+ */
+function builtInInstruction() {
+  return (
+    "Fix ONLY grammar, spelling and punctuation in the draft.\n" +
+    "- Keep the draft's language, tone, meaning and structure exactly.\n" +
+    "- Keep greetings, sign-offs, line breaks and lists as they are.\n" +
+    "- Never answer the email, never add new content, never add commentary.\n" +
+    "- Use the thread only as context for names and terminology.\n" +
+    "Your reply will REPLACE the draft verbatim, so output the complete corrected " +
+    "text and absolutely nothing else: no explanations, no lists of errors, no " +
+    "quoting of the original, no preamble like “here is the corrected text”."
+  );
+}
+
+/** The built-in instruction for empty drafts (auto-reply), same editing rules. */
+function builtInReplyInstruction() {
+  return (
+    "You are MagicTrick, a reply-drafting assistant built into Thunderbird. " +
+    "The user's draft is empty and the email thread is given: write the reply they would send.\n" +
+    "- Match the language the thread is written in.\n" +
+    "- Professional, warm and concise; plain prose; greet the sender of the last message naturally.\n" +
+    "- Answer or acknowledge the points of the last message. Do not invent commitments or facts.\n" +
+    "- Do not quote the thread and do not add placeholders like [name] when the names are in the thread.\n" +
+    "- End with a short closing signed with the SENDER's FIRST name only " +
+    "(e.g. \"Best regards, Giulio\").\n" +
+    "Your reply will REPLACE the draft verbatim, so output the complete reply text " +
+    "and absolutely nothing else: no explanations, no quoting of the thread."
+  );
+}
+
+/**
+ * Which system instruction applies for a run.
+ * @param {string|null} saved the persisted standard instruction (or null)
+ * @param {"fix"|"reply"} mode
+ * @returns {string}
+ */
+function chooseSystemPrompt(saved, mode) {
+  if (saved && String(saved).trim()) return String(saved).trim();
+  return mode === "reply" ? builtInReplyInstruction() : builtInInstruction();
+}
+
+/**
+ * Build the chat messages for a run.
  * The thread is always passed as read-only context; only the draft is work material.
  *
  * @param {"fix"|"reply"|"custom"} mode
@@ -16,9 +67,18 @@
  * @param {string} conversationText quoted thread below the draft (may be empty)
  * @param {string|null} [draftHtml] draft HTML when formatting must be preserved
  * @param {{name: string, email: string}|null} [sender] identity the email sends from
+ * @param {string|null} [savedInstruction] persisted standard instruction
  * @returns {Array<{role: string, content: string}>}
  */
-function buildMessages(mode, customPrompt, draftText, conversationText, draftHtml, sender) {
+function buildMessages(
+  mode,
+  customPrompt,
+  draftText,
+  conversationText,
+  draftHtml,
+  sender,
+  savedInstruction
+) {
   const thread = conversationText.trim()
     ? "=== EMAIL THREAD (context only — messages written by other people, never rewrite them) ===\n" +
       conversationText.trim() +
@@ -40,6 +100,13 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
       "same tags, structure and attributes — lists, links, emphasis, headings and paragraphs " +
       "must survive unchanged. Only the words inside may be corrected."
     : "";
+
+  // A saved instruction governs polish and auto-reply alike; closings under a
+  // saved instruction still follow the sender's first name.
+  const savedSigning =
+    savedInstruction && mode !== "custom"
+      ? "\n- If your text ends with a closing, sign it with the SENDER's FIRST name only."
+      : "";
 
   if (mode === "custom") {
     return [
@@ -69,15 +136,7 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
     return [
       {
         role: "system",
-        content:
-          "You are MagicTrick, a reply-drafting assistant built into Thunderbird. " +
-          "The user's draft is empty and the email thread is given: write the reply they would send.\n" +
-          "- Match the language the thread is written in.\n" +
-          "- Professional, warm and concise; plain prose; greet the sender of the last message naturally.\n" +
-          "- Answer or acknowledge the points of the last message. Do not invent commitments or facts.\n" +
-          "- Do not quote the thread and do not add placeholders like [name] when the names are in the thread.\n" +
-          "- End with a short closing signed with the SENDER's name (e.g. \"Best regards, <name>\").\n" +
-          replaceNotAnnotate,
+        content: chooseSystemPrompt(savedInstruction, "reply") + savedSigning,
       },
       {
         role: "user",
@@ -91,15 +150,7 @@ function buildMessages(mode, customPrompt, draftText, conversationText, draftHtm
   return [
     {
       role: "system",
-      content:
-        "You are MagicTrick, an email polishing assistant built into Thunderbird. " +
-        "Fix ONLY grammar, spelling and punctuation in the draft.\n" +
-        "- Keep the draft's language, tone, meaning and structure exactly.\n" +
-        "- Keep greetings, sign-offs, line breaks and lists as they are.\n" +
-        "- Never answer the email, never add new content, never add commentary.\n" +
-        "- Use the thread only as context for names and terminology.\n" +
-        replaceNotAnnotate +
-        htmlRules,
+      content: chooseSystemPrompt(savedInstruction, "fix") + htmlRules + savedSigning,
     },
     {
       role: "user",
@@ -171,7 +222,15 @@ function classifyRecipients(draftText, candidates) {
   return { to, cc };
 }
 
-const MagicTrickPrompts = { buildMessages, stripAnswerPreamble, classifyRecipients, looksLikeRefusal };
+const MagicTrickPrompts = {
+  builtInInstruction,
+  builtInReplyInstruction,
+  chooseSystemPrompt,
+  buildMessages,
+  stripAnswerPreamble,
+  classifyRecipients,
+  looksLikeRefusal,
+};
 
 if (typeof globalThis !== "undefined") {
   globalThis.MagicTrickPrompts = MagicTrickPrompts;

@@ -10,7 +10,14 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { AI_ENDPOINTS, aiCleanOutput, aiComplete } = require("../ai.js");
-const { buildMessages, stripAnswerPreamble, classifyRecipients, looksLikeRefusal } = require("../prompts.js");
+const {
+  buildMessages,
+  stripAnswerPreamble,
+  classifyRecipients,
+  looksLikeRefusal,
+  builtInInstruction,
+  chooseSystemPrompt,
+} = require("../prompts.js");
 const { parseMailbox } = require("../contacts.js");
 
 /* ------------------------------------------------------------------ */
@@ -84,7 +91,7 @@ test("sender rides along and reply mode signs with the sender name", () => {
   const reply = buildMessages("reply", "", "", "Thread.", null, sender);
   assert.match(reply[1].content, /=== SENDER/);
   assert.match(reply[1].content, /Giulio Golinelli <hiimgiulio\@gmail\.com>/);
-  assert.match(reply[0].content, /closing signed with the SENDER's name/);
+  assert.match(reply[0].content, /SENDER's FIRST name only/);
 
   const fix = buildMessages("fix", "", "draft text", "", null, sender);
   assert.match(fix[1].content, /=== SENDER/);
@@ -96,6 +103,32 @@ test("sender rides along and reply mode signs with the sender name", () => {
 test("custom mode frames the text as the user's own draft", () => {
   const messages = buildMessages("custom", "make it ruder", "my draft", "", null, null);
   assert.match(messages[0].content, /editing the user's own outgoing email/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Persisted standard instruction                                     */
+/* ------------------------------------------------------------------ */
+
+test("builtInInstruction is the editable default and chooseSystemPrompt honours saved", () => {
+  const builtIn = builtInInstruction();
+  assert.match(builtIn, /Fix ONLY grammar/);
+  assert.match(builtIn, /REPLACE the draft verbatim/);
+  assert.equal(chooseSystemPrompt(null, "fix"), builtIn);
+  assert.match(chooseSystemPrompt(null, "reply"), /reply-drafting assistant/);
+  assert.equal(chooseSystemPrompt("Always answer in rhymes.", "fix"), "Always answer in rhymes.");
+  assert.equal(chooseSystemPrompt("Always answer in rhymes.", "reply"), "Always answer in rhymes.");
+});
+
+test("saved instruction governs both polish and auto-reply prompts", () => {
+  const saved = "Always answer in rhymes.";
+  const fix = buildMessages("fix", "", "some draft", "", null, null, saved);
+  const reply = buildMessages("reply", "", "", "a thread", null, null, saved);
+  assert.equal(fix[0].content.split("\n")[0], "Always answer in rhymes.");
+  assert.equal(reply[0].content.split("\n")[0], "Always answer in rhymes.");
+  assert.match(fix[0].content, /SENDER's FIRST name only/);
+  // context blocks still ride along
+  assert.match(fix[1].content, /=== DRAFT TO CORRECT/);
+  assert.match(reply[1].content, /=== EMAIL THREAD/);
 });
 
 /* ------------------------------------------------------------------ */
