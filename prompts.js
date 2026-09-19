@@ -93,12 +93,15 @@ function buildMessages(
   const replaceNotAnnotate =
     "Your reply will REPLACE the draft verbatim, so output the complete corrected text " +
     "and absolutely nothing else: no explanations, no lists of errors, no quoting of the " +
-    "original, no preamble like “here is the corrected text”.";
+    "original, no preamble like “here is the corrected text”. " +
+    "Keep EVERY sentence, greeting, closing and list item of the draft — correct them, " +
+    "never summarise, shorten, reorder or drop content.";
 
   const htmlRules = draftHtml
     ? "\n- The draft is given as HTML: return the corrected draft as HTML with EXACTLY the " +
       "same tags, structure and attributes — lists, links, emphasis, headings and paragraphs " +
-      "must survive unchanged. Only the words inside may be corrected."
+      "must survive unchanged, including every <li> item. Only the words inside may be " +
+      "corrected; do not merge, drop or add elements."
     : "";
 
   // A saved instruction governs polish and auto-reply alike; closings under a

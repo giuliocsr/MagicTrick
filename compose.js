@@ -56,12 +56,17 @@
   /* ------------------------------------------------------------------ *
    * Draft / quote splitting
    *
-   * Thunderbird reply and forward structures we recognise:
+   * Real quoted threads we recognise by EVIDENCE, not by tag alone:
    *   <div class="moz-cite-prefix">On … wrote:</div>
    *   <blockquote type="cite">…quoted message…</blockquote>
-   *   <pre class="moz-signature">-- \nsignature</pre> / <div class="moz-signature">
    *   <div class="moz-forward-container">…forwarded message…</div>
-   * Plain-text compose instead uses "> " lines and a "-- " separator.
+   *   plain-text "> " / "On … wrote:" / "-----Original Message-----" lines
+   *   <pre class="moz-signature">-- \nsignature</pre> / <div class="moz-signature">
+   *
+   * A bare <blockquote> WITHOUT cite evidence is NOT a quote: mail UIs like
+   * ProtonMail wrap the user's own drafted text in blockquotes. Treating
+   * those as quotes made MagicTrick "correct" only the intro while the real
+   * draft below stayed untouched — so bare blockquotes count as draft.
    * ------------------------------------------------------------------ */
 
   const QUOTE_CLASSES = ["moz-cite-prefix", "moz-forward-container"];
@@ -93,23 +98,51 @@
     return false;
   }
 
-  /**
-   * Index of the first body child that belongs to the quoted thread (or to the
-   * signature): everything before it is the user's draft.
-   */
-  function draftBoundaryIndex(body) {
-    const kids = body.childNodes;
-    for (let i = 0; i < kids.length; i++) {
-      const node = kids[i];
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const name = node.localName.toLowerCase();
-        if (name === "blockquote") return i;
-        if (isSignatureNode(node)) return i;
-        if (QUOTE_CLASSES.some((c) => node.classList.contains(c))) return i;
+  /** Does this blockquote carry evidence of being a quoted message? */
+  function isRealQuote(node) {
+    if (node.getAttribute && node.getAttribute("type") === "cite") return true;
+    // a cite-prefix anywhere directly at its top level
+    for (const child of node.children) {
+      if (QUOTE_CLASSES.some((c) => child.classList && child.classList.contains(c))) {
+        return true;
       }
-      if (startsPlainTextQuote(node.textContent || "")) return i;
     }
-    return kids.length;
+    return startsPlainTextQuote(node.innerText || node.textContent || "");
+  }
+
+  function isQuoteNode(node) {
+    if (node.nodeType !== Node.ELEMENT_NODE) return false;
+    const name = node.localName.toLowerCase();
+    if (name === "blockquote") return isRealQuote(node);
+    return QUOTE_CLASSES.some((c) => node.classList && node.classList.contains(c));
+  }
+
+  /**
+   * Partition the body's top level: everything the user wrote (draft) versus
+   * quoted thread nodes versus the trailing signature. Empty text nodes are
+   * ignored.
+   */
+  function partitionBody(body) {
+    const draft = [];
+    const quotes = [];
+    let signature = null;
+    for (const node of [...body.childNodes]) {
+      if (node.nodeType === Node.TEXT_NODE && !(node.nodeValue || "").trim()) continue;
+      if (isSignatureNode(node)) {
+        if (!signature) signature = node;
+        continue;
+      }
+      if (isQuoteNode(node)) {
+        quotes.push(node);
+        continue;
+      }
+      if (startsPlainTextQuote(node.textContent || "")) {
+        quotes.push(node);
+        continue;
+      }
+      draft.push(node);
+    }
+    return { draft, quotes, signature };
   }
 
   /** Human-readable text of one node, honouring visual line breaks. */
@@ -125,39 +158,35 @@
     return "";
   }
 
-  /** Serialised HTML of the draft region (nodes [0, end)). */
-  function regionHtml(doc, body, end) {
+  /** Serialised HTML of a list of nodes. */
+  function nodesHtml(doc, nodes) {
     const wrapper = doc.createElement("div");
-    for (let i = 0; i < end; i++) {
-      wrapper.appendChild(body.childNodes[i].cloneNode(true));
-    }
+    for (const node of nodes) wrapper.appendChild(node.cloneNode(true));
     return wrapper.innerHTML;
   }
 
   /**
    * Collect the draft text, the quoted conversation text and the draft HTML.
+   * The draft is everything the user wrote — including bare blockquotes
+   * without cite evidence (ProtonMail-style drafts); real quotes are context.
    * @returns {{draftText: string, conversationText: string, draftHtml: string, error?: string}}
    */
   function collect() {
     const doc = getEditorDoc();
     if (!doc) return { error: "editor not found" };
-    const body = doc.body;
-    const boundary = draftBoundaryIndex(body);
+    const { draft, quotes } = partitionBody(doc.body);
 
-    let draft = "";
-    for (let i = 0; i < boundary; i++) draft += nodeText(body.childNodes[i]) + "\n";
-
-    let conversation = "";
-    for (let i = boundary; i < body.childNodes.length; i++) {
-      const node = body.childNodes[i];
-      if (isSignatureNode(node)) continue; // our own signature is not context
-      conversation += nodeText(node) + "\n";
-    }
+    const draftText = draft.map(nodeText).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    const conversationText = quotes
+      .map(nodeText)
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
 
     return {
-      draftText: draft.replace(/\n{3,}/g, "\n\n").trim(),
-      conversationText: conversation.replace(/\n{3,}/g, "\n\n").trim(),
-      draftHtml: regionHtml(doc, body, boundary).trim(),
+      draftText,
+      conversationText,
+      draftHtml: nodesHtml(doc, draft).trim(),
     };
   }
 
@@ -226,20 +255,54 @@
     if (!doc) return { ok: false, error: "editor not found" };
     try {
       const body = doc.body;
-      const boundary = draftBoundaryIndex(body);
       const win = doc.defaultView;
       win.focus();
 
+      const { draft, quotes, signature } = partitionBody(body);
       const html = options && options.html ? sanitizeHtml(text) : htmlFromText(text);
+
+      // Replace the whole span from the first to the last draft node. True
+      // quotes or a signature sitting INSIDE that span are re-appended after
+      // the corrected text (quote-below is the standard reply layout); nodes
+      // after the last draft node are never touched.
+      let replaced = "";
+      let replaceTarget = null;
+      let insertBefore = null;
+      if (draft.length) {
+        const first = draft[0];
+        const last = draft[draft.length - 1];
+        const inSpan = [];
+        let node = first;
+        while (node && node !== last.nextSibling) {
+          const next = node.nextSibling;
+          if (node !== first && node !== last && (quotes.includes(node) || node === signature)) {
+            inSpan.push(node);
+          }
+          node = next;
+        }
+        replaced = html + (inSpan.length ? nodesHtml(doc, inSpan) : "");
+        replaceTarget = { first, last };
+      } else {
+        // Empty draft (auto-reply): insert above everything.
+        replaced = html;
+        insertBefore = body.firstChild;
+      }
 
       const selection = win.getSelection();
       const range = doc.createRange();
-      range.setStart(body, 0);
-      range.setEnd(body, boundary); // collapsed when the draft is empty
+      if (replaceTarget) {
+        range.setStartBefore(replaceTarget.first);
+        range.setEndAfter(replaceTarget.last);
+      } else if (insertBefore) {
+        range.setStartBefore(insertBefore);
+        range.collapse(true);
+      } else {
+        range.selectNodeContents(body);
+      }
       selection.removeAllRanges();
       selection.addRange(range);
 
-      const ok = doc.execCommand("insertHTML", false, html);
+      const ok = doc.execCommand("insertHTML", false, replaced);
       selection.collapseToEnd();
       return ok ? { ok: true } : { ok: false, error: "the editor refused the insertion" };
     } catch (err) {

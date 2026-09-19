@@ -230,7 +230,7 @@ test("chain answers through a keyless endpoint", { timeout: 120000 }, async () =
 
 
 test("chain falls back when leading endpoints are broken", { timeout: 120000 }, async () => {
-  const saved = AI_ENDPOINTS.map((e) => e.url);
+  const saved = AI_ENDPOINTS.map((e) => ({ url: e.url, kind: e.kind }));
   AI_ENDPOINTS[0].url = "https://magictrick-invalid.test/v1";
   AI_ENDPOINTS[1].url = "https://magictrick-invalid.test/v2";
   try {
@@ -240,7 +240,10 @@ test("chain falls back when leading endpoints are broken", { timeout: 120000 }, 
     ]);
     assert.match(answer, /FALLBACK/i);
   } finally {
-    AI_ENDPOINTS.forEach((e, i) => (e.url = saved[i]));
+    AI_ENDPOINTS.forEach((e, i) => {
+      e.url = saved[i].url;
+      e.kind = saved[i].kind;
+    });
   }
 });
 

@@ -16,6 +16,8 @@ Menu + prompt bar UI: tests/MANUAL.md.)
 
 Usage:  python3 tests/e2e.py        (requires: pip install marionette_driver)
 """
+import email
+import email.policy
 import os
 import shutil
 import subprocess
@@ -764,81 +766,468 @@ def test_settings_tab(h):
     report("Settings opens a focused tab with sections", ok, f"{found}")
 
 
-FIXTURE_FILE = ROOT / "tests" / "Re_ Rental Tour Confirmed W_Meradith Dollaghan.html"
 
 
-def _fixture_body():
+# The user's real saved draft (.eml, ProtonMail-style) is the fixture for the
+# 'real email' scenarios below.
+
+
+EML_FILE = ROOT / "tests" / (
+    "eqwewq - Giulio Golinelli (hiimgiulio@gmail.com) - 2026-09-18 1818.eml"
+)
+
+
+def _eml_body():
+    msg = email.message_from_bytes(EML_FILE.read_bytes(), policy=email.policy.default)
+    html = None
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                html = part.get_content()
+                break
+    else:
+        html = msg.get_content()
     import re as _re
 
-    html = FIXTURE_FILE.read_text(errors="replace")
     match = _re.search(r"<body[^>]*>(.*)</body>", html, _re.S | _re.I)
     return match.group(1) if match else html
 
 
-def test_real_email_fixture(h):
-    """The user's real-world reply draft: 88 KB of Outlook-style HTML.
-    The draft region must be corrected while the quote and bold survive,
-    and the chain must not blow up on the payload."""
-    open_compose(h, _fixture_body())
+def test_eml_fixture_once(h):
+    """One pipeline pass over the .eml fixture. Returns (ok, detail)."""
+    body = _eml_body()
+    open_compose(h, body)
+    before = read_editor(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
+    after, elapsed = wait_for_editor_change(h, before["html"], timeout=20)
+    text = after["text"]
+    fixed = all(
+        bad not in text for bad in ["Walkig", "paramters", "scheduleed", "sheduledfor", "lookign fro"]
+    )
+    kept = "Julius Kleiner Park" in text and "Hi Meradith" in text
+    ok = elapsed < 8.0 and fixed and kept
+    return ok, (
+        f"{elapsed:.1f}s typosGone={fixed} contentKept={kept} — head: {text[:70]}"
+    )
+
+
+def test_eml_fixture(h):
+    """The user's real saved draft (.eml): ProtonMail-style blockquote wraps
+    the user's own typo-laden text. Everything the user wrote must be
+    corrected; the genuine content must survive. The anonymous AI pool
+    fluctuates minute to minute, so the pipeline gets up to three attempts
+    (mirroring a user re-clicking); code correctness = a clean full pass."""
+    last_detail = ""
+    for attempt in range(3):
+        ok, detail = test_eml_fixture_once(h)
+        last_detail = detail
+        if ok:
+            report(
+                "eml fixture: ProtonMail-style draft fully corrected, content kept",
+                True,
+                f"attempt {attempt + 1}: {detail}",
+            )
+            return
+        time.sleep(2)
+    report(
+        "eml fixture: ProtonMail-style draft fully corrected, content kept",
+        False,
+        f"after 3 attempts — {last_detail}",
+    )
+
+
+FIX_INSTRUCTION = (
+    "Fix ONLY grammar, spelling and punctuation in the draft above the quoted "
+    "message. Keep meaning, tone, paragraphs, the quote and the signature "
+    "untouched. Reply with the corrected draft text only."
+)
+
+
+def test_fix_and_undo(h):
+    open_compose(h, BAD_DRAFT)
+    before = read_editor(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
+    after, elapsed = wait_for_editor_change(h, before["html"])
+
+    text = after["text"]
+    fix_ok = (
+        "went to the store" in text
+        and "bought" in text
+        and "apples" in text
+        and "buyed" not in text
+        and "Alice original message words that must never change." in text
+        and "Alice Martin" in text
+        and "Giulio" in text
+        and "moz-signature" in after["html"]
+    )
+    fix_ok = fix_ok and elapsed < 5.0
+    report("grammar fix: draft corrected, quote and signature untouched", fix_ok,
+           f"{elapsed:.1f}s" if fix_ok else f"{elapsed:.1f}s — text: " + text[:400])
+
+    undone = h.exec(
+        f"""{SERVICES}
+        const cw = Services.wm.getMostRecentWindow("msgcompose");
+        const doc = cw.document.getElementById("messageEditor").contentDocument;
+        doc.execCommand("undo");
+        return doc.body.innerHTML;"""
+    )
+    report("undo: one editor undo restores the exact previous draft", undone == before["html"],
+           "" if undone == before["html"] else f"before: {before['html'][:200]}\nundone: {undone[:200]}")
+
+
+def test_auto_reply(h):
+    open_compose(h, QUOTE_ONLY)
     before = read_editor(h)
     run_with_prompt(
         h,
-        "Fix grammar, spelling and punctuation; lightly improve clarity. "
-        "Keep the structure and formatting. Reply with the corrected draft text only.",
+        "The draft is empty. Write the user's reply to the quoted email below: "
+        "professional, concise, matching the thread's language. "
+        "Reply with the reply text only.",
     )
     after, elapsed = wait_for_editor_change(h, before["html"])
-    html = after["html"]
-    text = after["text"]
-    corrected = text != before["text"]
-    # "Julius Kleiner Park" only exists inside the quoted message: it must
-    # survive the correction of the draft region above it.
+
+    import re
+    reply_match = re.search(r"<p[^>]*>[^<]{8,}", after["html"])
+    reply_index = reply_match.start() if reply_match else -1
+    quote_index = after["html"].find("moz-cite-prefix")
     ok = (
-        elapsed < 8.0
-        and corrected
-        and "Julius Kleiner Park" in text
-        and "Hi Meradith" in text
+        reply_index != -1
+        and quote_index != -1
+        and reply_index < quote_index
+        and "Can we meet tomorrow at 10" in after["text"]
+        and len(" ".join(after["text"].split())) > 25
+    )
+    ok = ok and elapsed < 5.0
+    report("empty draft: contextual auto-reply generated above intact quote", ok,
+           f"{elapsed:.1f}s" if ok else f"{elapsed:.1f}s — html: " + after["html"][:400])
+
+
+RECIPIENT_DRAFT = (
+    "<p>Hello Pietro, how are you?</p>"
+    "<p>Giorgio has attached the correspondence. Attached, you can find my reference letters.</p>"
+)
+
+
+def seed_contacts(h):
+    """Two contacts in the Personal Address Book, via Thunderbird's own services."""
+    seeded = h.exec(
+        """const { MailServices } = ChromeUtils.importESModule(
+               "resource:///modules/MailServices.sys.mjs");
+           const book = MailServices.ab.getDirectory("jsaddrbook://abook.sqlite");
+           const add = (displayName, email) => {
+             if (book.getCardFromProperty("PrimaryEmail", email, false)) return;
+             const card = Cc["@mozilla.org/addressbook/cardproperty;1"]
+               .createInstance(Ci.nsIAbCard);
+             card.displayName = displayName;
+             card.setProperty("FirstName", displayName.split(" ")[0]);
+             card.setProperty("LastName", displayName.split(" ").slice(1).join(" "));
+             card.primaryEmail = email;
+             book.addCard(card);
+           };
+           add("Pietro Bianchi", "pietro.bianchi@example.com");
+           add("Giorgio Rossi", "giorgio.rossi@example.com");
+           return "seeded";"""
+    )
+    if seeded != "seeded":
+        raise RuntimeError(f"contact seeding failed: {seeded}")
+
+
+def test_recipient_assistant(h):
+    open_compose(h, RECIPIENT_DRAFT)
+    before = read_editor(h)
+    run_with_prompt(
+        h,
+        "Fix ONLY grammar, spelling and punctuation. Keep everything else "
+        "unchanged. Reply with the corrected draft text only.",
+    )
+    after, elapsed = wait_for_editor_change(h, before["html"])
+    # Recipients land just after the text — poll for them instead of guessing.
+    read_fields = """const cw = Services.wm.getMostRecentWindow("msgcompose");
+        const read = (rowId) => {
+          const row = cw.document.getElementById(rowId);
+          if (!row) return "";
+          return [...row.querySelectorAll("input")].map((i) => i.value.toLowerCase()).join(",");
+        };
+        return { to: read("addressRowTo"), cc: read("addressRowCc") };"""
+    deadline = time.time() + 6
+    fields = h.exec(read_fields)
+    while time.time() < deadline and not (fields["to"] or fields["cc"]):
+        time.sleep(0.5)
+        fields = h.exec(read_fields)
+    ok = (
+        elapsed < 5.0
+        and "pietro.bianchi@example.com" in fields["to"]
+        and "giorgio.rossi@example.com" in fields["cc"]
     )
     report(
-        "real email fixture: corrected, quoted thread preserved",
+        "recipient assistant: Pietro → To, Giorgio → Cc from the address book",
         ok,
-        f"{elapsed:.1f}s corrected={corrected} quote={'Julius Kleiner Park' in text} — head: {text[:80]}",
+        f"{elapsed:.1f}s — to: {fields['to'] or '(none)'} · cc: {fields['cc'] or '(none)'}"
+        f" — text: {after['text'][:70]}",
     )
+
+
+FORMAT_DRAFT = (
+    "<p>Hi Pietro, how are you?</p>"
+    '<ul><li>Attention to the police</li><li>Amber alert does not vork</li></ul>'
+)
+
+
+def seed_history_message(h):
+    """A message from Alessia (NOT an address-book contact) in Local Folders,
+    so recipient resolution must come from message history."""
+    raw = (
+        "From: Alessia Verdi <alessia.verdi@gmail.com>\r\n"
+        "To: MagicTrick Tester <tester@magictrick.local>\r\n"
+        "Subject: Project update\r\n"
+        "Message-ID: <mt-history-1@magictrick.local>\r\n"
+        "Date: Tue, 16 Sep 2026 12:00:00 +0200\r\n"
+        "\r\n"
+        "The project is going well, talk soon.\r\n"
+    )
+    seeded = h.exec(
+        f"""const {{ MailServices }} = ChromeUtils.importESModule(
+               "resource:///modules/MailServices.sys.mjs");
+           const root = MailServices.accounts.localFoldersServer.rootFolder;
+           let folder = root.getChildNamed("MTHistory");
+           if (!folder) {{
+             root.createSubfolder("MTHistory", null);
+             folder = root.getChildNamed("MTHistory");
+           }}
+           if (!folder) throw new Error("could not create MTHistory folder");
+           folder.QueryInterface(Ci.nsIMsgLocalMailFolder)
+               .addMessage({json_str(raw)});
+           return "seeded";"""
+    )
+    if seeded != "seeded":
+        raise RuntimeError(f"history seeding failed: {seeded}")
+
+
+def test_format_preserved(h):
+    open_compose(h, FORMAT_DRAFT)
+    before = read_editor(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
+    after, elapsed = wait_for_editor_change(h, before["html"])
+    text = after["text"]
+    html = after["html"]
+    ok = (
+        elapsed < 5.0
+        and "<ul>" in html
+        and "<li>" in html
+        and "vork" not in text
+        and "work" in text.lower()
+        and "Attention to the police" in text
+    )
+    report(
+        "format preservation: bullet list survives the AI round trip",
+        ok,
+        f"{elapsed:.1f}s — html: {html[:200]}",
+    )
+
+
+HISTORY_DRAFT = (
+    "<p>Hi Pietro, how's it going?</p>"
+    "<p>Alessia will join the call tomorrow.</p>"
+)
+
+
+def test_recipient_from_history(h):
+    open_compose(h, HISTORY_DRAFT)
+    before = read_editor(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
+    wait_for_editor_change(h, before["html"])
+    read_fields = """const cw = Services.wm.getMostRecentWindow("msgcompose");
+        const read = (rowId) => {
+          const row = cw.document.getElementById(rowId);
+          if (!row) return "";
+          return [...row.querySelectorAll("input")].map((i) => i.value.toLowerCase()).join(",");
+        };
+        return { to: read("addressRowTo"), cc: read("addressRowCc") };"""
+    deadline = time.time() + 6
+    fields = h.exec(read_fields)
+    while time.time() < deadline and not fields["cc"]:
+        time.sleep(0.5)
+        fields = h.exec(read_fields)
+    ok = (
+        "pietro.bianchi@example.com" in fields["to"]
+        and "alessia.verdi@gmail.com" in fields["cc"]
+    )
+    report(
+        "recipient from message history (not in address book)",
+        ok,
+        f"to: {fields['to'] or '(none)'} · cc: {fields['cc'] or '(none)'}",
+    )
+
+
+def test_settings_tab(h):
+    """Right-click → 'Settings' opens a focused Thunderbird tab with sections."""
+    open_compose(h, "<p>settings tab test</p>")
+    h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           const rect = b.getBoundingClientRect();
+           b.dispatchEvent(new cw.MouseEvent("contextmenu", {
+               bubbles: true, cancelable: true, view: cw, button: 2,
+               clientX: rect.x + 5, clientY: rect.y + 5 }));
+           return null;"""
+    )
+    clicked = h.exec(
+        """const cw = Services.wm.getMostRecentWindow("msgcompose");
+           const item = [...cw.document.querySelectorAll("menuitem")]
+               .find((mi) => (mi.label || "").trim() === "Settings");
+           if (!item) return { error: "Settings menu item not found" };
+           item.doCommand();
+           const popup = item.closest("menupopup");
+           if (popup && typeof popup.hidePopup === "function") popup.hidePopup();
+           return { ok: true };"""
+    )
+    if not (clicked and clicked.get("ok")):
+        report("Settings opens a focused tab with sections", False,
+               clicked and clicked.get("error", "?"))
+        return
+    found = False
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        time.sleep(0.5)
+        found = h.exec(
+            """const w = Services.wm.getMostRecentWindow("mail:3pane");
+               const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
+                 catch (e) { return false; }
+               });
+               if (!tab) return false;
+               return { active: w.document.getElementById("tabmail").selectedTab === tab,
+                        title: tab.browser.contentTitle || "" };"""
+        )
+        if found:
+            break
+    ok = bool(found) and (found is True or found.get("active"))
+    report("Settings opens a focused tab with sections", ok, f"{found}")
+
+
+
+
+# The user's real saved draft (.eml, ProtonMail-style) is the fixture for the
+# 'real email' scenarios below.
+
+
+EML_FILE = ROOT / "tests" / (
+    "eqwewq - Giulio Golinelli (hiimgiulio@gmail.com) - 2026-09-18 1818.eml"
+)
+
+
+def _eml_body():
+    msg = email.message_from_bytes(EML_FILE.read_bytes(), policy=email.policy.default)
+    html = None
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                html = part.get_content()
+                break
+    else:
+        html = msg.get_content()
+    import re as _re
+
+    match = _re.search(r"<body[^>]*>(.*)</body>", html, _re.S | _re.I)
+    return match.group(1) if match else html
+
+
+def test_eml_fixture(h):
+    """The user's real saved draft (.eml): ProtonMail-style blockquote wraps
+    the user's own typo-laden text. Everything the user wrote must be
+    corrected; the genuine quote content must survive."""
+    body = _eml_body()
+    open_compose(h, body)
+    before = read_editor(h)
+    run_with_prompt(h, FIX_INSTRUCTION)
+    after, elapsed = wait_for_editor_change(h, before["html"], timeout=20)
+    text = after["text"]
+    fixed = all(
+        bad not in text for bad in ["Walkig", "paramters", "scheduleed", "sheduledfor", "lookign fro"]
+    )
+    kept = "Julius Kleiner Park" in text and "Hi Meradith" in text
+    ok = elapsed < 8.0 and fixed and kept
+    detail = f"{elapsed:.1f}s typosGone={fixed} contentKept={kept} — head: {text[:80]}"
+    if not ok:
+        # surface the run lifecycle for debugging (why it failed)
+        try:
+            uuid = h.exec(
+                """const b = Services.wm.getMostRecentWindow("msgcompose").document
+                       .getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+                   const m = b ? (b.getAttribute("style") || "").match(/moz-extension:\\/\\/([^\\/]+)\\//) : null;
+                   return m ? m[1] : null;"""
+            )
+        except Exception:
+            uuid = None
+        if uuid is None:
+            report(
+                "eml fixture: ProtonMail-style draft fully corrected, content kept",
+                False,
+                detail + "\n         (no compose button — could not read diagnostics)",
+            )
+            return
+        h.exec(
+            f"""Services.wm.getMostRecentWindow("mail:3pane").document
+                  .getElementById("tabmail").openTab("contentTab", {{
+                      url: "moz-extension://{uuid}/settings.html" }});
+                return null;"""
+        )
+        time.sleep(3)
+        script = (
+            "const wjs = content.wrappedJSObject;"
+            "wjs.messenger.storage.local.get('chainLog').then(d => {"
+            "  const l = (d && d.chainLog) || [];"
+            "  content.document.title = 'MTLOG::' +"
+            "    l.slice(-12).map(e => e.lane + '>' + e.status + '|' + e.ms + '|' + (e.error||'').slice(0,60)).join(' ;;');"
+            "});"
+        )
+        h.exec(
+            f"""const w = Services.wm.getMostRecentWindow("mail:3pane");
+                const tabmail = w.document.getElementById("tabmail");
+                const tab = tabmail.tabInfo.find(t => {{
+                  try {{ return t.browser && t.browser.currentURI.spec.includes("settings.html"); }} catch (e) {{ return false; }}
+                }});
+                tabmail.switchToTab(tab);
+                tab.browser.messageManager.loadFrameScript(
+                  "data:application/javascript;charset=utf-8,"
+                  + encodeURIComponent({json_str(script)}), false);
+                return null;"""
+        )
+        for i in range(6):
+            time.sleep(0.8)
+            title = h.exec(
+                """const w = Services.wm.getMostRecentWindow("mail:3pane");
+                   const tab = w.document.getElementById("tabmail").tabInfo.find(t => {
+                     try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); } catch (e) { return false; }
+                   });
+                   return tab ? (tab.browser.contentTitle || "") : "";"""
+            )
+            if isinstance(title, str) and title.startswith("MTLOG"):
+                detail += "\n         LOG: " + title[:600]
+                break
+    report(
+        "eml fixture: ProtonMail-style draft fully corrected, content kept",
+        ok,
+        detail,
+    )
+
 
 
 def test_rules_persistence_across_restart(h):
     """A registered file rule must survive a Thunderbird restart."""
-    # Open the settings tab and register a probe rule through its page.
+    open_compose(h, "<p>uuid probe</p>")
     uuid = h.exec(
-        """const cw = Services.wm.getMostRecentWindow("msgcompose") ||
-               Services.wm.getMostRecentWindow("mail:3pane");
-           const b = cw.document.getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
-           return b ? ((b.getAttribute("style") || "").match(/moz-extension:\/\/([^\/]+)\//) || [])[1] : null;"""
+        """const b = Services.wm.getMostRecentWindow("msgcompose").document
+               .getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
+           const m = b ? (b.getAttribute("style") || "").match(/moz-extension:\\/\\/([^\\/]+)\\//) : null;
+           return m ? m[1] : null;"""
     )
-    if not uuid:
-        # no compose window open — open one just to read the extension UUID
-        open_compose(h, "<p>uuid probe</p>")
-        uuid = h.exec(
-            """const b = Services.wm.getMostRecentWindow("msgcompose").document
-                   .getElementById("magictrick_giuliocsr_github_io-composeAction-toolbarbutton");
-               return (b.getAttribute("style") || "").match(/moz-extension:\/\/([^\/]+)\//)[1];"""
-        )
     h.exec(
         f"""Services.wm.getMostRecentWindow("mail:3pane").document
               .getElementById("tabmail").openTab("contentTab", {{
                   url: "moz-extension://{uuid}/settings.html" }});
             return null;"""
     )
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        time.sleep(0.5)
-        if h.exec(
-            """const w = Services.wm.getMostRecentWindow("mail:3pane");
-               return w.document.getElementById("tabmail").tabInfo.some(t => {
-                 try { return t.browser && t.browser.currentURI.spec.includes("settings.html"); }
-                 catch (e) { return false; }
-               });"""
-        ):
-            break
     time.sleep(2)  # let the settings page finish loading
     count = "(no readback)"
     deadline = time.time() + 12
@@ -869,8 +1258,7 @@ def test_rules_persistence_across_restart(h):
         )
         if isinstance(count, str) and count.startswith("MTRULES:"):
             break
-    ok_before = isinstance(count, str) and count.startswith("MTRULES:1")
-    if not ok_before:
+    if not (isinstance(count, str) and count.startswith("MTRULES:1")):
         report("registered files persist across restart", False, f"registration readback: {count!r}")
         return
 
@@ -882,9 +1270,8 @@ def test_rules_persistence_across_restart(h):
                   url: "moz-extension://{uuid}/settings.html" }});
             return null;"""
     )
-    time.sleep(4)
     after_title = None
-    deadline = time.time() + 10
+    deadline = time.time() + 15
     while time.time() < deadline:
         h.exec(
             """const w = Services.wm.getMostRecentWindow("mail:3pane");
@@ -925,6 +1312,7 @@ def main():
     h = Harness()
     try:
         h.setup()
+        test_eml_fixture(h)
         seed_contacts(h)  # before any run: the extension caches contacts
         seed_history_message(h)
         test_fix_and_undo(h)
@@ -934,7 +1322,6 @@ def main():
         test_recipient_from_history(h)
         test_settings_tab(h)
         test_prompt_window_v2(h)
-        test_real_email_fixture(h)
         test_rules_persistence_across_restart(h)
     finally:
         h.teardown()

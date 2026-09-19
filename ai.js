@@ -22,24 +22,27 @@
 
 const AI_ENDPOINTS = [
   {
-    name: "LLM7 (Mistral Nemo)",
-    url: "https://api.llm7.io/v1/chat/completions",
-    // LLM7 expects an Authorization header even for anonymous access, and
-    // allows only ONE concurrent request per anonymous client.
-    headers: { Authorization: "Bearer unused" },
-    model: "mistral-Nemo-Instruct-2407",
-    cooldownMs: 10000,
-  },
-  {
+    // The steadiest anonymous lane: handles spaced requests indefinitely.
     name: "Pollinations (openai-fast)",
     url: "https://text.pollinations.ai/openai",
     model: "openai-fast",
     cooldownMs: 4000,
   },
   {
-    name: "Pollinations",
-    url: "https://text.pollinations.ai/openai",
-    model: "openai",
+    // Per-IP rolling quota; when it runs out the server says for how long.
+    name: "LLM7 (Mistral Nemo)",
+    url: "https://api.llm7.io/v1/chat/completions",
+    // LLM7 expects an Authorization header even for anonymous access.
+    headers: { Authorization: "Bearer unused" },
+    model: "mistral-Nemo-Instruct-2407",
+    cooldownMs: 10000,
+  },
+  {
+    // Last resort: the simple GET text API (flaky, occasionally 500s).
+    name: "Pollinations (simple)",
+    kind: "simple-get",
+    url: "https://text.pollinations.ai/",
+    model: "openai-fast",
     cooldownMs: 4000,
   },
 ];
@@ -63,6 +66,9 @@ let lastWinner = null;
  * @returns {Promise<string>} the assistant message content
  */
 async function aiCallEndpoint(endpoint, messages, signal) {
+  if (endpoint.kind === "simple-get") {
+    return aiCallSimpleGet(endpoint, messages, signal);
+  }
   const response = await fetch(endpoint.url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(endpoint.headers || {}) },
@@ -76,7 +82,7 @@ async function aiCallEndpoint(endpoint, messages, signal) {
     signal,
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await httpError(response);
   }
   const data = await response.json();
   // Reasoning models put their chain of thought in a sibling field; only the
@@ -86,6 +92,38 @@ async function aiCallEndpoint(endpoint, messages, signal) {
     throw new Error("empty completion");
   }
   return aiCleanOutput(content);
+}
+
+/** The plain GET text API: whole conversation flattened into one prompt. */
+async function aiCallSimpleGet(endpoint, messages, signal) {
+  const prompt = messages
+    .map((m) => (m.role === "system" ? `INSTRUCTIONS:\n${m.content}` : m.content))
+    .join("\n\n---\n\n");
+  const url = endpoint.url + encodeURIComponent(prompt) + `?model=${encodeURIComponent(endpoint.model)}`;
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw await httpError(response);
+  }
+  const text = (await response.text()).trim();
+  if (!text) throw new Error("empty completion");
+  // Some error bodies come back as JSON with status 200 — reject them.
+  if (text.startsWith("{") && /"error"/i.test(text.slice(0, 120))) {
+    throw new Error("error body");
+  }
+  return aiCleanOutput(text);
+}
+
+/** HTTP error with the server's own retry hint, when it gives one. */
+async function httpError(response) {
+  let hint = "";
+  try {
+    const body = await response.text();
+    const match = body.match(/[Rr]etry after (\d+) seconds/);
+    if (match) hint = ` retry-after=${match[1]}`;
+  } catch {
+    // body unreadable — status alone is enough
+  }
+  return new Error(`HTTP ${response.status}${hint}`);
 }
 
 /** Strip the wrapping markdown fences some models add around plain answers. */
@@ -111,10 +149,27 @@ async function aiComplete(messages) {
     return await aiCompleteOnce(messages);
   } catch (err) {
     const elapsed = Date.now() - started;
-    logLane("chain", "failed", elapsed, err.message || err);
-    // One retry whenever the chain failed quickly enough that the user is
-    // still waiting anyway — the anonymous endpoints' throttles and network
-    // blips usually clear within a second.
+    const message = String(err.message || err);
+    logLane("chain", "failed", elapsed, message);
+    // Auto-retry only when something might recover by itself (network blip,
+    // 5xx, timeout). When every lane answered 429 the provider is throttling
+    // us — retrying immediately just burns quota. The ONE exception: a short
+    // server-given retry-after (≤ 30 s) is worth waiting out inside the run.
+    const allThrottled = /HTTP 429/.test(message) &&
+      !/(timeout|NetworkError|fetch failed|HTTP 5)/i.test(message.replace(/HTTP 429[^·]*·/g, ""));
+    if (allThrottled) {
+      const hints = [...message.matchAll(/retry-after=(\d+)/g)].map((m) => Number(m[1]));
+      const waitS = hints.length ? Math.min(30, Math.max(1, Math.min(...hints))) : 0;
+      if (waitS > 0 && elapsed < 8000) {
+        logLane("chain", "throttle-wait", waitS * 1000, `waiting ${waitS}s`);
+        await new Promise((resolve) => setTimeout(resolve, waitS * 1000));
+        return aiCompleteOnce(messages);
+      }
+      throw new Error(
+        "Free AI quota is throttled right now — wait a minute and click again. " +
+          `(detail: ${message.slice(0, 160)})`
+      );
+    }
     if (elapsed >= 12000) throw err;
     await new Promise((resolve) => setTimeout(resolve, 700));
     return aiCompleteOnce(messages);
@@ -190,11 +245,14 @@ function aiCompleteOnce(messages) {
             Date.now() - laneStarted,
             String(err.message || err)
           );
-          if (/HTTP 429/.test(String(err.message || ""))) {
-            laneCooldowns.set(
-              endpoint.name,
-              Date.now() + (endpoint.cooldownMs || 6000)
-            );
+          const errorMessage = String(err.message || "");
+          if (/HTTP 429/.test(errorMessage)) {
+            // Honour the server's own retry hint when present ("retry-after=N").
+            const hint = errorMessage.match(/retry-after=(\d+)/);
+            const cooldownMs = hint
+              ? Math.min(360000, Math.max(5000, Number(hint[1]) * 1000))
+              : endpoint.cooldownMs || 6000;
+            laneCooldowns.set(endpoint.name, Date.now() + cooldownMs);
           }
           if (settled) return;
           failed.add(index);

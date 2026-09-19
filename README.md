@@ -71,6 +71,17 @@ draft region replaced ◀───────────  corrected text
   retried once automatically.
 - **Settings → Diagnostics** shows the last chain events (which endpoint, ok /
   429 / timeout / network error, latency) — paste those into a bug report.
+- What "All AI endpoints failed" actually means: the free keyless pool is a
+  shared, anonymous resource. LLM7 enforces a per-IP rolling quota (their
+  server literally answers "Retry after N seconds"), and the anonymous
+  Pollinations text API is being deprecated and intermittently returns
+  server-side errors. When both are dry, MagicTrick waits out short throttles
+  inside the run and otherwise reports honestly — click again a minute later.
+  Heavy automated testing from one IP exhausts the quota for everyone on it.
+- The steadiest lane (Pollinations openai-fast) leads; the previous winner
+  leads alone with the other lane as a late hedge; 429'd endpoints sit out
+  the server-given cooldown; all-429 failures are NOT auto-retried (that
+  would deepen the throttle).
 - There is deliberately **no startup warm-up request**: the background page sleeps
   when idle and every wake would re-run one, racing your first click into the
   endpoints' anonymous concurrency limits. Failures are logged to Thunderbird's
