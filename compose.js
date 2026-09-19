@@ -224,6 +224,20 @@
    */
   function sanitizeHtml(html) {
     const doc = getEditorDoc();
+
+    // Some models emit placeholder paragraphs like `<p ... Greeting text…>`
+    // (an ellipsis where the content should be, with the real prose swallowed
+    // into the tag). Recover the prose instead of letting the parser eat it.
+    html = html.replace(
+      /<([a-z0-9]+)\s+\.\.\.\s*([^>]*)>/gi,
+      (match, tag, rest) => {
+        const restTrimmed = rest.trim();
+        if (restTrimmed.includes('="') || !restTrimmed) return `<${tag}>`;
+        if (restTrimmed.length >= 10) return `<${tag}>${restTrimmed}`;
+        return `<${tag}>`;
+      }
+    );
+
     const holder = doc.createElement("div");
     holder.innerHTML = html;
     const sanitize = (element) => {

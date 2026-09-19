@@ -47,7 +47,9 @@ const AI_ENDPOINTS = [
   },
 ];
 
-const AI_REQUEST_TIMEOUT_MS = 8000;
+// LLM7 answers real-size drafts in 10-15 s — the old 8 s timeout aborted it
+// mid-answer, which is why big drafts "failed" while tiny ones worked.
+const AI_REQUEST_TIMEOUT_MS = 20000;
 const AI_MAX_OUTPUT_TOKENS = 2048;
 
 /** Throttled lanes sit out briefly instead of burning race slots.
